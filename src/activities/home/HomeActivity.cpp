@@ -21,7 +21,7 @@
 #include "fontIds.h"
 
 int HomeActivity::getMenuItemCount() const {
-  int count = 4;  // File Browser, Recents, File transfer, Settings
+  int count = 7;  // File Browser, Recents, File transfer, Shopping List, Calendar, Contacts, Settings
   if (!recentBooks.empty()) {
     count += recentBooks.size();
   }
@@ -192,6 +192,9 @@ void HomeActivity::loop() {
     const int recentsIdx = idx++;
     const int opdsLibraryIdx = hasOpdsServers ? idx++ : -1;
     const int fileTransferIdx = idx++;
+    const int shoppingListIdx = idx++;
+    const int calendarIdx = idx++;
+    const int contactsIdx = idx++;
     const int settingsIdx = idx;
 
     if (selectorIndex < recentBooks.size()) {
@@ -204,6 +207,12 @@ void HomeActivity::loop() {
       onOpdsBrowserOpen();
     } else if (menuSelectedIndex == fileTransferIdx) {
       onFileTransferOpen();
+    } else if (menuSelectedIndex == shoppingListIdx) {
+      onShoppingListOpen();
+    } else if (menuSelectedIndex == calendarIdx) {
+      onCalendarOpen();
+    } else if (menuSelectedIndex == contactsIdx) {
+      onContactsOpen();
     } else if (menuSelectedIndex == settingsIdx) {
       onSettingsOpen();
     }
@@ -226,8 +235,8 @@ void HomeActivity::render(RenderLock&&) {
 
   // Build menu items dynamically
   std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_FILE_TRANSFER),
-                                        tr(STR_SETTINGS_TITLE)};
-  std::vector<UIIcon> menuIcons = {Folder, Recent, Transfer, Settings};
+                                        "Shopping List", "Calendar", tr(STR_CONTACTS), tr(STR_SETTINGS_TITLE)};
+  std::vector<UIIcon> menuIcons = {Folder, Recent, Transfer, File, File, File, Settings};
 
   if (hasOpdsServers) {
     menuItems.insert(menuItems.begin() + 2, tr(STR_OPDS_BROWSER));
@@ -268,3 +277,8 @@ void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 void HomeActivity::onFileTransferOpen() { activityManager.goToFileTransfer(); }
 
 void HomeActivity::onOpdsBrowserOpen() { activityManager.goToBrowser(); }
+
+void HomeActivity::onShoppingListOpen() { activityManager.goToShoppingList(); }
+
+void HomeActivity::onCalendarOpen() { activityManager.goToCalendar(); }
+void HomeActivity::onContactsOpen() { activityManager.goToContacts(); }

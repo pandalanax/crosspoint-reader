@@ -14,6 +14,9 @@
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
+#include "shopping/ShoppingListActivity.h"
+#include "calendar/CalendarActivity.h"
+#include "contacts/ContactsActivity.h"
 #include "util/FullScreenMessageActivity.h"
 
 void ActivityManager::begin() {
@@ -206,6 +209,18 @@ void ActivityManager::goToFullScreenMessage(std::string message, EpdFontFamily::
 }
 
 void ActivityManager::goToCrashReport() { replaceActivity(std::make_unique<CrashActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToShoppingList() {
+  replaceActivity(std::make_unique<ShoppingListActivity>(renderer, mappedInput));
+}
+
+void ActivityManager::goToCalendar() {
+  replaceActivity(std::make_unique<CalendarActivity>(renderer, mappedInput));
+}
+
+void ActivityManager::goToContacts() {
+  replaceActivity(std::make_unique<ContactsActivity>(renderer, mappedInput));
+}
 
 void ActivityManager::goHome() { replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput)); }
 

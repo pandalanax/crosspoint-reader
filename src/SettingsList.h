@@ -7,6 +7,8 @@
 #include "CrossPointSettings.h"
 #include "KOReaderCredentialStore.h"
 #include "activities/settings/SettingsActivity.h"
+#include "caldav/CalDavCredentialStore.h"
+#include "tandoor/TandoorCredentialStore.h"
 
 // Shared settings list used by both the device settings UI and the web settings API.
 // Each entry has a key (for JSON API) and category (for grouping).
@@ -111,6 +113,52 @@ inline const std::vector<SettingInfo>& getSettingsList() {
             KOREADER_STORE.saveToFile();
           },
           "koMatchMethod", StrId::STR_KOREADER_SYNC),
+      // --- OPDS Browser (web-only, uses CrossPointSettings char arrays) ---
+      SettingInfo::String(StrId::STR_OPDS_SERVER_URL, SETTINGS.opdsServerUrl, sizeof(SETTINGS.opdsServerUrl),
+                          "opdsServerUrl", StrId::STR_OPDS_BROWSER),
+      SettingInfo::String(StrId::STR_USERNAME, SETTINGS.opdsUsername, sizeof(SETTINGS.opdsUsername), "opdsUsername",
+                          StrId::STR_OPDS_BROWSER),
+      SettingInfo::String(StrId::STR_PASSWORD, SETTINGS.opdsPassword, sizeof(SETTINGS.opdsPassword), "opdsPassword",
+                          StrId::STR_OPDS_BROWSER)
+          .withObfuscated(),
+      // --- Tandoor Recipes (web-only, uses TandoorCredentialStore) ---
+      SettingInfo::DynamicString(
+          StrId::STR_TANDOOR_SERVER_URL, [] { return TANDOOR_STORE.getServerUrl(); },
+          [](const std::string& v) {
+            TANDOOR_STORE.setServerUrl(v);
+            TANDOOR_STORE.saveToFile();
+          },
+          "tandoorServerUrl", StrId::STR_TANDOOR),
+      SettingInfo::DynamicString(
+          StrId::STR_TANDOOR_API_TOKEN, [] { return TANDOOR_STORE.getApiToken(); },
+          [](const std::string& v) {
+            TANDOOR_STORE.setApiToken(v);
+            TANDOOR_STORE.saveToFile();
+          },
+          "tandoorApiToken", StrId::STR_TANDOOR),
+
+      // --- CalDAV Calendar (web-only, uses CalDavCredentialStore) ---
+      SettingInfo::DynamicString(
+          StrId::STR_CALDAV_CALENDAR_URL, [] { return CALDAV_STORE.getCalendarUrl(); },
+          [](const std::string& v) {
+            CALDAV_STORE.setCalendarUrl(v);
+            CALDAV_STORE.saveToFile();
+          },
+          "caldavCalendarUrl", StrId::STR_CALDAV),
+      SettingInfo::DynamicString(
+          StrId::STR_CALDAV_USERNAME, [] { return CALDAV_STORE.getUsername(); },
+          [](const std::string& v) {
+            CALDAV_STORE.setUsername(v);
+            CALDAV_STORE.saveToFile();
+          },
+          "caldavUsername", StrId::STR_CALDAV),
+      SettingInfo::DynamicString(
+          StrId::STR_CALDAV_PASSWORD, [] { return CALDAV_STORE.getPassword(); },
+          [](const std::string& v) {
+            CALDAV_STORE.setPassword(v);
+            CALDAV_STORE.saveToFile();
+          },
+          "caldavPassword", StrId::STR_CALDAV),
       // --- Status Bar Settings (web-only, uses StatusBarSettingsActivity) ---
       SettingInfo::Toggle(StrId::STR_CHAPTER_PAGE_COUNT, &CrossPointSettings::statusBarChapterPageCount,
                           "statusBarChapterPageCount", StrId::STR_CUSTOMISE_STATUS_BAR),
