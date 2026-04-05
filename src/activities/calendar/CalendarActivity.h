@@ -45,7 +45,7 @@ class CalendarActivity final : public Activity {
   int todayYear = 0, todayMonth = 0, todayDay = 0;
 
   // Day detail state
-  size_t dayDetailIndex = 0;  // scroll position in day events list
+  size_t dayDetailIndex = 0;                    // scroll position in day events list
   std::vector<const CalendarEvent*> dayEvents;  // pointers into events vector
 
   // Time picker state (for on-the-go event creation)

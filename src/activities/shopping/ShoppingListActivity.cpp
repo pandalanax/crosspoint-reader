@@ -317,32 +317,31 @@ void ShoppingListActivity::render(RenderLock&&) {
   }
 
   // Render the list using drawList — items show checkbox + food name
-  GUI.drawList(
-      renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(displayRows.size()),
-      static_cast<int>(selectorIndex),
-      // Row title
-      [this](int index) -> std::string {
-        const auto& row = displayRows[index];
-        if (row.type == DisplayRow::CATEGORY_HEADER) {
-          return "-- " + row.headerText + " --";
-        }
-        const auto& item = items[row.itemIndex];
-        // Format: [x] or [ ] followed by amount + unit + food name
-        std::string prefix = item.checked ? "[x] " : "[ ] ";
-        // Format amount: skip ".0" for whole numbers
-        char amountBuf[16];
-        if (item.amount == static_cast<int>(item.amount)) {
-          snprintf(amountBuf, sizeof(amountBuf), "%d", static_cast<int>(item.amount));
-        } else {
-          snprintf(amountBuf, sizeof(amountBuf), "%.1f", item.amount);
-        }
-        std::string line = prefix + amountBuf;
-        if (!item.unitName.empty()) {
-          line += " " + item.unitName;
-        }
-        line += " " + item.foodName;
-        return line;
-      });
+  GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(displayRows.size()),
+               static_cast<int>(selectorIndex),
+               // Row title
+               [this](int index) -> std::string {
+                 const auto& row = displayRows[index];
+                 if (row.type == DisplayRow::CATEGORY_HEADER) {
+                   return "-- " + row.headerText + " --";
+                 }
+                 const auto& item = items[row.itemIndex];
+                 // Format: [x] or [ ] followed by amount + unit + food name
+                 std::string prefix = item.checked ? "[x] " : "[ ] ";
+                 // Format amount: skip ".0" for whole numbers
+                 char amountBuf[16];
+                 if (item.amount == static_cast<int>(item.amount)) {
+                   snprintf(amountBuf, sizeof(amountBuf), "%d", static_cast<int>(item.amount));
+                 } else {
+                   snprintf(amountBuf, sizeof(amountBuf), "%.1f", item.amount);
+                 }
+                 std::string line = prefix + amountBuf;
+                 if (!item.unitName.empty()) {
+                   line += " " + item.unitName;
+                 }
+                 line += " " + item.foodName;
+                 return line;
+               });
 
   // Button hints — long-press Back refreshes
   const auto labels = mappedInput.mapLabels("Back/Refresh", tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));

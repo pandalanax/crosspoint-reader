@@ -21,8 +21,8 @@ class ContactsActivity final : public Activity {
 
   struct Contact {
     std::string name;
-    std::string phones;   // semicolon-delimited
-    std::string emails;   // semicolon-delimited
+    std::string phones;  // semicolon-delimited
+    std::string emails;  // semicolon-delimited
     std::string org;
   };
 

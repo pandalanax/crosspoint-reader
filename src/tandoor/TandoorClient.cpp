@@ -12,17 +12,19 @@
 
 namespace {
 
-constexpr int HTTP_TIMEOUT_MS = 10000;       // 10s per request
-constexpr int MAX_RETRIES = 2;               // Retry once on transient failure
-constexpr int RETRY_DELAY_MS = 1000;         // 1s between retries
-constexpr int MAX_PAGES = 10;                // Safety bound on pagination
-constexpr int MAX_RESPONSE_SIZE = 64 * 1024; // 64KB max response per page
+constexpr int HTTP_TIMEOUT_MS = 10000;        // 10s per request
+constexpr int MAX_RETRIES = 2;                // Retry once on transient failure
+constexpr int RETRY_DELAY_MS = 1000;          // 1s between retries
+constexpr int MAX_PAGES = 10;                 // Safety bound on pagination
+constexpr int MAX_RESPONSE_SIZE = 64 * 1024;  // 64KB max response per page
 
 bool isHttpsUrl(const std::string& url) { return url.rfind("https://", 0) == 0; }
 
 bool isWifiConnected() { return WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0); }
 
-bool isTransientError(int httpCode) { return httpCode < 0 || httpCode == 500 || httpCode == 502 || httpCode == 503 || httpCode == 504; }
+bool isTransientError(int httpCode) {
+  return httpCode < 0 || httpCode == 500 || httpCode == 502 || httpCode == 503 || httpCode == 504;
+}
 
 void addAuthHeaders(HTTPClient& http) {
   http.addHeader("Authorization", ("Bearer " + TANDOOR_STORE.getApiToken()).c_str());

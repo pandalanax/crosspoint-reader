@@ -281,8 +281,7 @@ bool CalendarActivity::loadPendingFromSd() {
     pe.hour = obj["h"] | 0;
     pe.minute = obj["n"] | 0;
     // Skip malformed entries
-    if (pe.year < 2020 || pe.month < 1 || pe.month > 12 || pe.day < 1 || pe.day > 31 || pe.hour > 23 ||
-        pe.minute > 59)
+    if (pe.year < 2020 || pe.month < 1 || pe.month > 12 || pe.day < 1 || pe.day > 31 || pe.hour > 23 || pe.minute > 59)
       continue;
     pendingEvents.push_back(pe);
   }
@@ -623,22 +622,20 @@ void CalendarActivity::renderDayDetail() {
   if (dayEvents.empty()) {
     renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, contentTop + 20, "No events");
   } else {
-    GUI.drawList(
-        renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(dayEvents.size()),
-        static_cast<int>(dayDetailIndex),
-        [this](int index) -> std::string {
-          const auto* ev = dayEvents[index];
-          if (ev->allDay) {
-            return "All day: " + ev->summary;
-          }
-          char timeBuf[8];
-          snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d ", ev->startHour, ev->startMinute);
-          std::string line = std::string(timeBuf) + ev->summary;
-          if (!ev->location.empty()) {
-            line += " @ " + ev->location;
-          }
-          return line;
-        });
+    GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(dayEvents.size()),
+                 static_cast<int>(dayDetailIndex), [this](int index) -> std::string {
+                   const auto* ev = dayEvents[index];
+                   if (ev->allDay) {
+                     return "All day: " + ev->summary;
+                   }
+                   char timeBuf[8];
+                   snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d ", ev->startHour, ev->startMinute);
+                   std::string line = std::string(timeBuf) + ev->summary;
+                   if (!ev->location.empty()) {
+                     line += " @ " + ev->location;
+                   }
+                   return line;
+                 });
   }
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", tr(STR_DIR_UP), tr(STR_DIR_DOWN));

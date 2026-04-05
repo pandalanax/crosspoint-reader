@@ -234,8 +234,9 @@ void HomeActivity::render(RenderLock&&) {
                           std::bind(&HomeActivity::storeCoverBuffer, this));
 
   // Build menu items dynamically
-  std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_FILE_TRANSFER),
-                                        "Shopping List", "Calendar", tr(STR_CONTACTS), tr(STR_SETTINGS_TITLE)};
+  std::vector<const char*> menuItems = {
+      tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_FILE_TRANSFER), "Shopping List",
+      "Calendar",           tr(STR_CONTACTS),          tr(STR_SETTINGS_TITLE)};
   std::vector<UIIcon> menuIcons = {Folder, Recent, Transfer, File, File, File, Settings};
 
   if (hasOpdsServers) {

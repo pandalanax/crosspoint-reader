@@ -4,11 +4,11 @@
 #include <Logging.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <esp_random.h>
 
 #include <algorithm>
 #include <cstring>
 #include <ctime>
-#include <esp_random.h>
 
 #include "CalDavCredentialStore.h"
 
@@ -322,7 +322,7 @@ CalDavClient::Error CalDavClient::putEvent(int year, int month, int day, int hou
   int si = 0;
   for (int i = 0; summary[i] != '\0' && si < 64; i++) {
     char c = summary[i];
-    if (c == '\n' || c == '\r') continue;    // No line breaks in SUMMARY
+    if (c == '\n' || c == '\r') continue;             // No line breaks in SUMMARY
     if (c == '\\' || c == ';' || c == ',') continue;  // iCal special chars
     safeSummary[si++] = c;
   }
@@ -362,8 +362,7 @@ CalDavClient::Error CalDavClient::putEvent(int year, int month, int day, int hou
                          "SUMMARY:%s\r\n"
                          "END:VEVENT\r\n"
                          "END:VCALENDAR\r\n",
-                         uid, year, month, day, hour, minute, endYear, endMonth, endDay, endHour, minute,
-                         safeSummary);
+                         uid, year, month, day, hour, minute, endYear, endMonth, endDay, endHour, minute, safeSummary);
   if (written < 0 || written >= static_cast<int>(sizeof(icsBody))) {
     LOG_ERR("CAL", "iCal body too large");
     return PARSE_ERROR;

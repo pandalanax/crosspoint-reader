@@ -303,18 +303,16 @@ void ContactsActivity::renderList() {
   if (displayRows.empty()) {
     renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, contentTop + 20, "No contacts found");
   } else {
-    GUI.drawList(
-        renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(displayRows.size()),
-        static_cast<int>(selectorIndex),
-        [this](int index) -> std::string {
-          const auto& row = displayRows[index];
-          if (row.type == DisplayRow::LETTER_HEADER) {
-            char buf[8];
-            snprintf(buf, sizeof(buf), "-- %c --", row.letter);
-            return std::string(buf);
-          }
-          return contacts[row.contactIndex].name;
-        });
+    GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(displayRows.size()),
+                 static_cast<int>(selectorIndex), [this](int index) -> std::string {
+                   const auto& row = displayRows[index];
+                   if (row.type == DisplayRow::LETTER_HEADER) {
+                     char buf[8];
+                     snprintf(buf, sizeof(buf), "-- %c --", row.letter);
+                     return std::string(buf);
+                   }
+                   return contacts[row.contactIndex].name;
+                 });
   }
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_SELECT), "Prev Ltr", "Next Ltr");
