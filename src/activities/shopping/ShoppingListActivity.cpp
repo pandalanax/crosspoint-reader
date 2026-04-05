@@ -316,32 +316,49 @@ void ShoppingListActivity::render(RenderLock&&) {
     return;
   }
 
-  // Render the list using drawList — items show checkbox + food name
-  GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(displayRows.size()),
-               static_cast<int>(selectorIndex),
-               // Row title
+  // Render the list — checked items get a strikethrough line drawn over them
+  const Rect listRect{0, contentTop, pageWidth, contentHeight};
+  GUI.drawList(renderer, listRect, static_cast<int>(displayRows.size()), static_cast<int>(selectorIndex),
                [this](int index) -> std::string {
                  const auto& row = displayRows[index];
                  if (row.type == DisplayRow::CATEGORY_HEADER) {
                    return "-- " + row.headerText + " --";
                  }
                  const auto& item = items[row.itemIndex];
-                 // Format: [x] or [ ] followed by amount + unit + food name
-                 std::string prefix = item.checked ? "[x] " : "[ ] ";
-                 // Format amount: skip ".0" for whole numbers
                  char amountBuf[16];
                  if (item.amount == static_cast<int>(item.amount)) {
                    snprintf(amountBuf, sizeof(amountBuf), "%d", static_cast<int>(item.amount));
                  } else {
                    snprintf(amountBuf, sizeof(amountBuf), "%.1f", item.amount);
                  }
-                 std::string line = prefix + amountBuf;
+                 std::string line = amountBuf;
                  if (!item.unitName.empty()) {
                    line += " " + item.unitName;
                  }
                  line += " " + item.foodName;
                  return line;
                });
+
+  // Draw strikethrough lines over checked items
+  {
+    const int rowHeight = metrics.listRowHeight;
+    const int pageItems = listRect.height / rowHeight;
+    const int pageStart = static_cast<int>(selectorIndex) / pageItems * pageItems;
+    const int rowCount = static_cast<int>(displayRows.size());
+    const int textH = renderer.getLineHeight(UI_10_FONT_ID);
+    const int padX = metrics.contentSidePadding;
+
+    for (int i = pageStart; i < rowCount && i < pageStart + pageItems; i++) {
+      const auto& row = displayRows[i];
+      if (row.type != DisplayRow::ITEM) continue;
+      if (!items[row.itemIndex].checked) continue;
+
+      int itemY = listRect.y + (i % pageItems) * rowHeight;
+      int lineY = itemY + textH / 2;
+      bool inverted = (i == static_cast<int>(selectorIndex));
+      renderer.drawLine(padX, lineY, pageWidth - padX * 2, lineY, !inverted);
+    }
+  }
 
   // Button hints — long-press Back refreshes
   const auto labels = mappedInput.mapLabels("Back/Refresh", tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
