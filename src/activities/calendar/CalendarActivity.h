@@ -36,6 +36,8 @@ class CalendarActivity final : public Activity {
   State state = State::WIFI_SELECTION;
   std::vector<CalendarEvent> events;
   std::string errorMessage;
+  unsigned long successPopupUntilMs = 0;
+  static constexpr unsigned long SUCCESS_POPUP_DURATION_MS = 1500;
   bool userActive = false;
 
   // Month grid state — all set by initTodayDate() in onEnter()

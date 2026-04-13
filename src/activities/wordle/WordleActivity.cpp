@@ -17,19 +17,27 @@
 
 int WordleActivity::getKbRowLength(int row) const {
   switch (row) {
-    case 0: return 10;  // QWERTYUIOP
-    case 1: return 9;   // ASDFGHJKL
-    case 2: return 8;   // Z X C V B N M DEL
-    default: return 0;
+    case 0:
+      return 10;  // QWERTYUIOP
+    case 1:
+      return 9;  // ASDFGHJKL
+    case 2:
+      return 8;  // Z X C V B N M DEL
+    default:
+      return 0;
   }
 }
 
 char WordleActivity::getKbChar(int row, int col) const {
   switch (row) {
-    case 0: return kbRow0[col];
-    case 1: return kbRow1[col];
-    case 2: return kbRow2[col];
-    default: return '\0';
+    case 0:
+      return kbRow0[col];
+    case 1:
+      return kbRow1[col];
+    case 2:
+      return kbRow2[col];
+    default:
+      return '\0';
   }
 }
 
@@ -91,7 +99,7 @@ bool WordleActivity::loadWordList() {
   }
   LOG_DBG("WORDLE", "Wordle answer count: %d", wordCount);
   wordListMessage.clear();
-  return wordCount > 0;
+  return true;
 }
 
 bool WordleActivity::loadRandomWord() {
@@ -499,24 +507,24 @@ void WordleActivity::drawGrid() {
           renderer.fillRect(x, y, tileSize, tileSize, true);  // Black fill for all revealed
           break;
         case TileState::Filled:
-          renderer.fillRect(x, y, tileSize, tileSize, false);        // White fill
+          renderer.fillRect(x, y, tileSize, tileSize, false);    // White fill
           renderer.drawRect(x, y, tileSize, tileSize, 2, true);  // Thick border
           break;
         case TileState::Empty:
         default:
-          renderer.fillRect(x, y, tileSize, tileSize, false);        // White fill
+          renderer.fillRect(x, y, tileSize, tileSize, false);    // White fill
           renderer.drawRect(x, y, tileSize, tileSize, 1, true);  // Thin border
           break;
       }
 
       // Draw letter
       if (hasLetter) {
-        char text[2] = {letter, '\0'};
+        const char text[2] = {letter, '\0'};
         int textWidth = renderer.getTextWidth(BOOKERLY_16_FONT_ID, text);
         int textX = x + (tileSize - textWidth) / 2;
         int textHeight = renderer.getLineHeight(BOOKERLY_16_FONT_ID);
-        bool revealed = (state == TileState::Correct || state == TileState::WrongPosition ||
-                         state == TileState::Absent);
+        bool revealed =
+            (state == TileState::Correct || state == TileState::WrongPosition || state == TileState::Absent);
         // Shift text up slightly on revealed tiles to leave room for indicator
         int textY = y + (tileSize - textHeight) / 2 - (revealed ? 4 : 0);
         renderer.drawText(BOOKERLY_16_FONT_ID, textX, textY, text, !revealed);
@@ -730,13 +738,13 @@ void WordleActivity::render(RenderLock&&) {
 
     const int midY = renderer.getScreenHeight() / 2;
     const int lineH = renderer.getLineHeight(UI_12_FONT_ID);
-  if (WiFi.status() == WL_CONNECTED) {
-      renderer.drawCenteredText(UI_12_FONT_ID, midY - lineH * 2, wordListMessage.empty() ? "Missing word lists."
-                                                                                          : wordListMessage.c_str());
+    if (WiFi.status() == WL_CONNECTED) {
+      renderer.drawCenteredText(UI_12_FONT_ID, midY - lineH * 2,
+                                wordListMessage.empty() ? "Missing word lists." : wordListMessage.c_str());
       renderer.drawCenteredText(UI_12_FONT_ID, midY + 2, "Press OK to download.");
     } else {
-      renderer.drawCenteredText(UI_12_FONT_ID, midY - lineH * 3, wordListMessage.empty() ? "Missing word lists."
-                                                                                          : wordListMessage.c_str());
+      renderer.drawCenteredText(UI_12_FONT_ID, midY - lineH * 3,
+                                wordListMessage.empty() ? "Missing word lists." : wordListMessage.c_str());
       renderer.drawCenteredText(UI_12_FONT_ID, midY, "Copy files to /wordle/:");
       renderer.drawCenteredText(UI_12_FONT_ID, midY + lineH + 4, "wordles.json");
       renderer.drawCenteredText(UI_12_FONT_ID, midY + lineH * 2 + 8, "nonwordles.json");

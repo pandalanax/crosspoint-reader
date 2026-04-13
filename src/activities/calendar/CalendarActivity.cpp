@@ -28,9 +28,7 @@ constexpr const char* MONTH_NAMES[] = {"",    "Jan", "Feb", "Mar", "Apr", "May",
 constexpr const char* DAY_HEADERS[] = {"Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"};
 }  // namespace
 
-std::string CalendarActivity::cacheMissingMessage() {
-  return "Missing /.crosspoint/calendar_cache.json";
-}
+std::string CalendarActivity::cacheMissingMessage() { return "Missing /.crosspoint/calendar_cache.json"; }
 
 std::string CalendarActivity::wifiRequiredMessage() {
   return "WiFi required. No cache at /.crosspoint/calendar_cache.json";
@@ -118,8 +116,8 @@ void CalendarActivity::onEnter() {
 
   if (!CALDAV_STORE.hasCredentials()) {
     state = State::ERROR;
-    errorMessage = CALDAV_STORE.getConfigError().empty() ? "Missing /.crosspoint/caldav.json"
-                                                         : CALDAV_STORE.getConfigError();
+    errorMessage =
+        CALDAV_STORE.getConfigError().empty() ? "Missing /.crosspoint/caldav.json" : CALDAV_STORE.getConfigError();
     requestUpdate();
     return;
   }
@@ -140,6 +138,7 @@ void CalendarActivity::onEnter() {
 void CalendarActivity::onExit() {
   if (!events.empty()) saveCacheToSd();
   if (!pendingEvents.empty()) savePendingToSd();
+  successPopupUntilMs = 0;
   events.clear();
   dayEvents.clear();
   pendingEvents.clear();
@@ -183,6 +182,7 @@ void CalendarActivity::fetchCalendar() {
   saveCacheToSd();
   state = State::MONTH_VIEW;
   userActive = false;
+  successPopupUntilMs = millis() + SUCCESS_POPUP_DURATION_MS;
 
   WiFi.disconnect();
   WiFi.mode(WIFI_OFF);
@@ -348,6 +348,11 @@ void CalendarActivity::syncPendingEvents() {
 // ---- Input handling ----
 
 void CalendarActivity::loop() {
+  if (successPopupUntilMs != 0 && millis() >= successPopupUntilMs) {
+    successPopupUntilMs = 0;
+    requestUpdate();
+  }
+
   if (state == State::TIME_PICKER) {
     // Back: cancel, return to month view
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
@@ -745,39 +750,22 @@ void CalendarActivity::renderTimePicker() {
 void CalendarActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
-  const auto pageWidth = renderer.getScreenWidth();
-  const auto& metrics = UITheme::getInstance().getMetrics();
-
-  if (state == State::FETCHING) {
-    GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, "Calendar");
-    int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-    renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, contentTop + 20, "Fetching calendar...");
-    renderer.displayBuffer();
-    return;
-  }
-
-  if (state == State::ERROR) {
-    GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, "Calendar");
-    int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-    renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, contentTop + 20, errorMessage.c_str());
-    renderer.displayBuffer();
-    return;
-  }
-
-  if (state == State::WIFI_SELECTION) {
-    GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, "Calendar");
-    int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-    renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, contentTop + 20, "Connecting to WiFi...");
-    renderer.displayBuffer();
-    return;
-  }
-
-  if (state == State::MONTH_VIEW) {
-    renderMonthGrid();
-  } else if (state == State::DAY_VIEW) {
+  if (state == State::DAY_VIEW) {
     renderDayDetail();
   } else if (state == State::TIME_PICKER) {
     renderTimePicker();
+  } else {
+    renderMonthGrid();
+  }
+
+  if (state == State::WIFI_SELECTION) {
+    GUI.drawPopup(renderer, "Connecting to WiFi...");
+  } else if (state == State::FETCHING) {
+    GUI.drawPopup(renderer, "Fetching calendar...");
+  } else if (state == State::ERROR) {
+    GUI.drawPopup(renderer, errorMessage.c_str());
+  } else if (successPopupUntilMs != 0) {
+    GUI.drawPopup(renderer, "Refresh successful");
   }
 
   renderer.displayBuffer();

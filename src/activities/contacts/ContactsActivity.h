@@ -50,7 +50,7 @@ class ContactsActivity final : public Activity {
   void buildDisplayRows();
   int findNextLetterIndex(int fromRow, int direction);
   void renderList();
-  void renderDetail();
+  void renderDetailPopup();
 
  public:
   explicit ContactsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)

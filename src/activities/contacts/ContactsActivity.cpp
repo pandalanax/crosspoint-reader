@@ -182,6 +182,13 @@ void ContactsActivity::onExit() {
 // ---- Input handling ----
 
 void ContactsActivity::loop() {
+  if (state == State::ERROR) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+      onGoHome();
+    }
+    return;
+  }
+
   if (state == State::DETAIL) {
     if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
       state = State::LIST;
@@ -189,7 +196,44 @@ void ContactsActivity::loop() {
       requestUpdate();
       return;
     }
-    // Scroll detail if needed (future: for contacts with many fields)
+
+    const auto pageHeight = renderer.getScreenHeight();
+    const auto& metrics = UITheme::getInstance().getMetrics();
+    const int popupHeight = pageHeight - 80;
+    const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID) + 4;
+    const int popupContentHeight = popupHeight - 52;
+    const int visibleLines = std::max(1, popupContentHeight / lineHeight);
+
+    buttonNavigator.onNextRelease([this, visibleLines] {
+      detailScrollIndex++;
+      userActive = true;
+      requestUpdate();
+    });
+
+    buttonNavigator.onPreviousRelease([this] {
+      if (detailScrollIndex > 0) {
+        detailScrollIndex--;
+        userActive = true;
+        requestUpdate();
+      }
+    });
+
+    buttonNavigator.onNextContinuous([this, visibleLines] {
+      detailScrollIndex += visibleLines;
+      userActive = true;
+      requestUpdate();
+    });
+
+    buttonNavigator.onPreviousContinuous([this, visibleLines] {
+      if (detailScrollIndex > visibleLines) {
+        detailScrollIndex -= visibleLines;
+      } else {
+        detailScrollIndex = 0;
+      }
+      userActive = true;
+      requestUpdate();
+    });
+
     return;
   }
 
@@ -323,82 +367,108 @@ void ContactsActivity::renderList() {
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 }
 
-void ContactsActivity::renderDetail() {
+void ContactsActivity::renderDetailPopup() {
   const int pageWidth = renderer.getScreenWidth();
   const int pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto& contact = contacts[displayRows[selectorIndex].contactIndex];
 
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, contact.name.c_str());
+  std::vector<std::string> lines;
+  lines.reserve(12);
 
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-  const int lineH = renderer.getLineHeight(UI_12_FONT_ID) + 4;
-  const int padX = metrics.contentSidePadding;
-  int y = contentTop + 8;
-
-  // Phone numbers
-  if (!contact.phones.empty()) {
-    renderer.drawText(UI_10_FONT_ID, padX, y, "Phone:");
-    y += lineH;
-
-    // Split on semicolons and render each
-    size_t start = 0;
-    while (start < contact.phones.size()) {
-      size_t end = contact.phones.find(';', start);
-      if (end == std::string::npos) end = contact.phones.size();
-      std::string phone = contact.phones.substr(start, end - start);
-      renderer.drawText(UI_12_FONT_ID, padX + 12, y, phone.c_str());
-      y += lineH;
-      start = end + 1;
-    }
-    y += 4;
-  }
-
-  // Emails
-  if (!contact.emails.empty()) {
-    renderer.drawText(UI_10_FONT_ID, padX, y, "Email:");
-    y += lineH;
+  auto addSection = [&lines](const char* label, const std::string& values) {
+    if (values.empty()) return;
+    lines.push_back(label);
 
     size_t start = 0;
-    while (start < contact.emails.size()) {
-      size_t end = contact.emails.find(';', start);
-      if (end == std::string::npos) end = contact.emails.size();
-      std::string email = contact.emails.substr(start, end - start);
-      renderer.drawText(UI_12_FONT_ID, padX + 12, y, email.c_str());
-      y += lineH;
+    while (start < values.size()) {
+      size_t end = values.find(';', start);
+      if (end == std::string::npos) end = values.size();
+      if (end > start) {
+        lines.push_back(values.substr(start, end - start));
+      }
       start = end + 1;
     }
-    y += 4;
-  }
 
-  // Org
+    lines.push_back("");
+  };
+
+  addSection("Phone", contact.phones);
+  addSection("Email", contact.emails);
   if (!contact.org.empty()) {
-    renderer.drawText(UI_10_FONT_ID, padX, y, "Org:");
-    y += lineH;
-    renderer.drawText(UI_12_FONT_ID, padX + 12, y, contact.org.c_str());
+    lines.push_back("Org");
+    lines.push_back(contact.org);
+  }
+  if (!lines.empty() && lines.back().empty()) {
+    lines.pop_back();
+  }
+  if (lines.empty()) {
+    lines.push_back("No phone, email, or org");
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  const int popupX = metrics.contentSidePadding + 4;
+  const int popupY = metrics.topPadding + metrics.headerHeight + 6;
+  const int popupWidth = pageWidth - (metrics.contentSidePadding + 4) * 2;
+  const int popupHeight = pageHeight - popupY - metrics.buttonHintsHeight - 8;
+
+  renderer.fillRect(popupX - 2, popupY - 2, popupWidth + 4, popupHeight + 4, true);
+  renderer.fillRect(popupX, popupY, popupWidth, popupHeight, false);
+
+  const int titleX = popupX + 12;
+  const int titleY = popupY + 10;
+  renderer.drawText(UI_12_FONT_ID, titleX, titleY, contact.name.c_str(), true, EpdFontFamily::BOLD);
+
+  const int separatorY = titleY + renderer.getLineHeight(UI_12_FONT_ID) + 6;
+  renderer.fillRect(popupX + 10, separatorY, popupWidth - 20, 1, true);
+
+  const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID) + 4;
+  const int contentTop = separatorY + 8;
+  const int contentBottom = popupY + popupHeight - 12;
+  const int visibleLines = std::max(1, (contentBottom - contentTop) / lineHeight);
+  const size_t maxScroll = lines.size() > static_cast<size_t>(visibleLines) ? lines.size() - visibleLines : 0;
+  if (detailScrollIndex > maxScroll) {
+    detailScrollIndex = maxScroll;
+  }
+
+  int y = contentTop;
+  for (size_t i = detailScrollIndex; i < lines.size() && i < detailScrollIndex + static_cast<size_t>(visibleLines);
+       i++) {
+    const bool isLabel = !lines[i].empty() && (lines[i] == "Phone" || lines[i] == "Email" || lines[i] == "Org");
+    const int lineX = popupX + (isLabel ? 12 : 24);
+    if (lines[i].empty()) {
+      y += lineHeight / 2;
+      continue;
+    }
+    if (isLabel) {
+      renderer.drawText(UI_10_FONT_ID, lineX, y, lines[i].c_str(), true, EpdFontFamily::BOLD);
+    } else {
+      renderer.drawText(UI_12_FONT_ID, lineX, y, lines[i].c_str(), true);
+    }
+    y += lineHeight;
+  }
+
+  if (maxScroll > 0) {
+    char scrollBuf[24];
+    snprintf(scrollBuf, sizeof(scrollBuf), "%zu/%zu", detailScrollIndex + 1, maxScroll + 1);
+    const int scrollWidth = renderer.getTextWidth(UI_10_FONT_ID, scrollBuf);
+    renderer.drawText(UI_10_FONT_ID, popupX + popupWidth - scrollWidth - 12, popupY + popupHeight - 18, scrollBuf,
+                      true);
+  }
 }
 
 void ContactsActivity::render(RenderLock&&) {
   renderer.clearScreen();
 
-  if (state == State::ERROR) {
-    const auto pageWidth = renderer.getScreenWidth();
-    const auto& metrics = UITheme::getInstance().getMetrics();
-    GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, "Contacts");
-    int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-    renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, contentTop + 20, errorMessage.c_str());
-    renderer.displayBuffer();
-    return;
-  }
+  renderList();
 
-  if (state == State::LIST) {
-    renderList();
-  } else if (state == State::DETAIL) {
-    renderDetail();
+  if (state == State::DETAIL) {
+    renderDetailPopup();
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  } else if (state == State::ERROR) {
+    GUI.drawPopup(renderer, errorMessage.c_str());
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   }
 
   renderer.displayBuffer();
