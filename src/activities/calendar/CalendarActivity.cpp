@@ -26,6 +26,13 @@ constexpr const char* MONTH_NAMES[] = {"",    "Jan", "Feb", "Mar", "Apr", "May",
                                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 
 constexpr const char* DAY_HEADERS[] = {"Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"};
+
+int dateToDays(int year, int month, int day) {
+  int a = (14 - month) / 12;
+  int y = year + 4800 - a;
+  int m = month + 12 * a - 3;
+  return day + (153 * m + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32045;
+}
 }  // namespace
 
 std::string CalendarActivity::cacheMissingMessage() { return "Missing /.crosspoint/calendar_cache.json"; }
@@ -69,16 +76,22 @@ int CalendarActivity::dayOfWeek(int year, int month, int day) const {
 }
 
 bool CalendarActivity::hasEventsOnDay(int year, int month, int day) const {
+  const int dayValue = dateToDays(year, month, day);
   for (const auto& ev : events) {
-    if (ev.startYear == year && ev.startMonth == month && ev.startDay == day) return true;
+    const int startValue = dateToDays(ev.startYear, ev.startMonth, ev.startDay);
+    const int endValue = dateToDays(ev.endYear, ev.endMonth, ev.endDay);
+    if (dayValue >= startValue && dayValue <= endValue) return true;
   }
   return false;
 }
 
 void CalendarActivity::collectDayEvents(int year, int month, int day) {
   dayEvents.clear();
+  const int dayValue = dateToDays(year, month, day);
   for (const auto& ev : events) {
-    if (ev.startYear == year && ev.startMonth == month && ev.startDay == day) {
+    const int startValue = dateToDays(ev.startYear, ev.startMonth, ev.startDay);
+    const int endValue = dateToDays(ev.endYear, ev.endMonth, ev.endDay);
+    if (dayValue >= startValue && dayValue <= endValue) {
       dayEvents.push_back(&ev);
     }
   }
@@ -212,6 +225,11 @@ bool CalendarActivity::saveCacheToSd() const {
     obj["d"] = ev.startDay;
     obj["h"] = ev.startHour;
     obj["n"] = ev.startMinute;
+    obj["ey"] = ev.endYear;
+    obj["em"] = ev.endMonth;
+    obj["ed"] = ev.endDay;
+    obj["eh"] = ev.endHour;
+    obj["en"] = ev.endMinute;
     obj["a"] = ev.allDay;
   }
 
@@ -255,6 +273,11 @@ bool CalendarActivity::loadCacheFromSd() {
     ev.startDay = obj["d"] | 0;
     ev.startHour = obj["h"] | 0;
     ev.startMinute = obj["n"] | 0;
+    ev.endYear = obj["ey"] | ev.startYear;
+    ev.endMonth = obj["em"] | ev.startMonth;
+    ev.endDay = obj["ed"] | ev.startDay;
+    ev.endHour = obj["eh"] | ev.startHour;
+    ev.endMinute = obj["en"] | ev.startMinute;
     ev.allDay = obj["a"] | false;
     events.push_back(std::move(ev));
   }

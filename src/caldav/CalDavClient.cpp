@@ -17,10 +17,42 @@ namespace {
 constexpr int HTTP_TIMEOUT_MS = 15000;
 constexpr int MAX_RETRIES = 2;
 constexpr int RETRY_DELAY_MS = 1000;
-constexpr int MAX_RESPONSE_SIZE = 128 * 1024;  // 128KB — calendars can be larger than shopping lists
+constexpr int MAX_RESPONSE_SIZE = 512 * 1024;
 constexpr int MAX_SUMMARY_LEN = 128;
 constexpr int MAX_LOCATION_LEN = 128;
-constexpr int MAX_EVENTS = 500;
+constexpr int MAX_EVENTS = 1000;
+
+struct ICalDateTime {
+  int year = 0;
+  int month = 0;
+  int day = 0;
+  int hour = 0;
+  int minute = 0;
+  bool allDay = false;
+};
+
+struct ParsedEvent {
+  CalendarEvent event = {};
+  std::string uid;
+  std::string rrule;
+  bool hasDtStart = false;
+  bool hasDtEnd = false;
+  bool isException = false;
+  ICalDateTime recurrenceId = {};
+};
+
+enum class Frequency { NONE, DAILY, WEEKLY, MONTHLY, YEARLY };
+
+struct RecurrenceRule {
+  Frequency freq = Frequency::NONE;
+  int interval = 1;
+  int count = 0;
+  bool hasUntil = false;
+  ICalDateTime until = {};
+  int byMonth = 0;
+  int bySetPos = 0;
+  std::vector<int> byDays;
+};
 
 // Base64 encode a string into a stack buffer (max 256 chars output)
 void base64Encode(const std::string& input, char* out, int outSize) {
@@ -69,46 +101,6 @@ bool isTransientError(int httpCode) {
   return httpCode < 0 || httpCode == 500 || httpCode == 502 || httpCode == 503 || httpCode == 504;
 }
 
-// Parse "YYYYMMDD" or "YYYYMMDDTHHmmSS" from iCal DTSTART/DTEND values.
-// Returns true on success.
-bool parseICalDate(const char* val, int& year, int& month, int& day, int& hour, int& minute, bool& allDay) {
-  // Strip VALUE=DATE: or VALUE=DATE-TIME: prefixes or TZID=...: prefixes
-  const char* colon = strchr(val, ':');
-  if (colon) val = colon + 1;
-
-  int len = strlen(val);
-  if (len < 8) return false;
-
-  // Parse YYYYMMDD
-  char buf[5];
-  strncpy(buf, val, 4);
-  buf[4] = '\0';
-  year = atoi(buf);
-  strncpy(buf, val + 4, 2);
-  buf[2] = '\0';
-  month = atoi(buf);
-  strncpy(buf, val + 6, 2);
-  buf[2] = '\0';
-  day = atoi(buf);
-
-  if (len >= 15 && val[8] == 'T') {
-    // YYYYMMDDTHHmmSS
-    strncpy(buf, val + 9, 2);
-    buf[2] = '\0';
-    hour = atoi(buf);
-    strncpy(buf, val + 11, 2);
-    buf[2] = '\0';
-    minute = atoi(buf);
-    allDay = false;
-  } else {
-    hour = 0;
-    minute = 0;
-    allDay = true;
-  }
-
-  return year > 0 && month >= 1 && month <= 12 && day >= 1 && day <= 31;
-}
-
 // Unfold iCal line continuations: lines starting with a space or tab are continuations
 // of the previous line. We process in-place.
 void unfoldICalLines(String& ical) {
@@ -136,6 +128,517 @@ int dateToDays(int year, int month, int day) {
   return day + (153 * m + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32045;
 }
 
+void daysToDate(int days, int& year, int& month, int& day) {
+  int a = days + 32044;
+  int b = (4 * a + 3) / 146097;
+  int c = a - (146097 * b) / 4;
+  int d = (4 * c + 3) / 1461;
+  int e = c - (1461 * d) / 4;
+  int m = (5 * e + 2) / 153;
+  day = e - (153 * m + 2) / 5 + 1;
+  month = m + 3 - 12 * (m / 10);
+  year = 100 * b + d - 4800 + m / 10;
+}
+
+bool isLeapYear(int year) { return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0); }
+
+int daysInMonth(int year, int month) {
+  static constexpr int dim[] = {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  if (month == 2 && isLeapYear(year)) return 29;
+  return dim[month];
+}
+
+void addDays(int& year, int& month, int& day, int delta) {
+  int days = dateToDays(year, month, day) + delta;
+  daysToDate(days, year, month, day);
+}
+
+void addMinutes(int& year, int& month, int& day, int& hour, int& minute, int deltaMinutes) {
+  int totalMinutes = hour * 60 + minute + deltaMinutes;
+  while (totalMinutes < 0) {
+    totalMinutes += 24 * 60;
+    addDays(year, month, day, -1);
+  }
+  while (totalMinutes >= 24 * 60) {
+    totalMinutes -= 24 * 60;
+    addDays(year, month, day, 1);
+  }
+  hour = totalMinutes / 60;
+  minute = totalMinutes % 60;
+}
+
+int dayOfWeekMonday0(int year, int month, int day) {
+  static constexpr int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+  int y = year;
+  if (month < 3) y--;
+  int dow = (y + y / 4 - y / 100 + y / 400 + t[month - 1] + day) % 7;
+  return (dow + 6) % 7;
+}
+
+int lastSundayOfMonth(int year, int month) {
+  const int lastDay = daysInMonth(year, month);
+  const int dow = dayOfWeekMonday0(year, month, lastDay);
+  return lastDay - ((dow + 1) % 7);
+}
+
+bool isEuropeBrusselsDstUtc(int year, int month, int day, int hour, int minute) {
+  const int marchSwitchDay = lastSundayOfMonth(year, 3);
+  const int octoberSwitchDay = lastSundayOfMonth(year, 10);
+
+  if (month < 3 || month > 10) return false;
+  if (month > 3 && month < 10) return true;
+
+  const int minutes = hour * 60 + minute;
+  if (month == 3) {
+    if (day > marchSwitchDay) return true;
+    if (day < marchSwitchDay) return false;
+    return minutes >= 60;
+  }
+
+  if (day < octoberSwitchDay) return true;
+  if (day > octoberSwitchDay) return false;
+  return minutes < 60;
+}
+
+bool parseWeekdayToken(const std::string& token, int& weekday) {
+  if (token == "MO")
+    weekday = 0;
+  else if (token == "TU")
+    weekday = 1;
+  else if (token == "WE")
+    weekday = 2;
+  else if (token == "TH")
+    weekday = 3;
+  else if (token == "FR")
+    weekday = 4;
+  else if (token == "SA")
+    weekday = 5;
+  else if (token == "SU")
+    weekday = 6;
+  else
+    return false;
+  return true;
+}
+
+bool parsePropertyValue(const char* val, ICalDateTime& out) {
+  const char* colon = strchr(val, ':');
+  if (colon) val = colon + 1;
+
+  int len = strlen(val);
+  if (len < 8) return false;
+
+  char buf[5];
+  strncpy(buf, val, 4);
+  buf[4] = '\0';
+  out.year = atoi(buf);
+  strncpy(buf, val + 4, 2);
+  buf[2] = '\0';
+  out.month = atoi(buf);
+  strncpy(buf, val + 6, 2);
+  buf[2] = '\0';
+  out.day = atoi(buf);
+
+  out.hour = 0;
+  out.minute = 0;
+  out.allDay = true;
+
+  if (len >= 13 && val[8] == 'T') {
+    strncpy(buf, val + 9, 2);
+    buf[2] = '\0';
+    out.hour = atoi(buf);
+    strncpy(buf, val + 11, 2);
+    buf[2] = '\0';
+    out.minute = atoi(buf);
+    out.allDay = false;
+
+    if (val[len - 1] == 'Z') {
+      const int offsetMinutes = isEuropeBrusselsDstUtc(out.year, out.month, out.day, out.hour, out.minute) ? 120 : 60;
+      addMinutes(out.year, out.month, out.day, out.hour, out.minute, offsetMinutes);
+    }
+  }
+
+  return out.year > 0 && out.month >= 1 && out.month <= 12 && out.day >= 1 && out.day <= 31;
+}
+
+std::string extractPropertyValue(const char* line, int lineLen, int propertyNameLen, int maxLen) {
+  if (lineLen <= propertyNameLen) return "";
+  if (line[propertyNameLen] == ':') {
+    return std::string(line + propertyNameLen + 1, std::min(lineLen - propertyNameLen - 1, maxLen));
+  }
+
+  const char* colonPos = static_cast<const char*>(memchr(line, ':', lineLen));
+  if (!colonPos) return "";
+
+  const int valueStart = static_cast<int>(colonPos - line) + 1;
+  return std::string(line + valueStart, std::min(lineLen - valueStart, maxLen));
+}
+
+void normalizeEventRange(ParsedEvent& parsed) {
+  if (!parsed.hasDtStart) return;
+
+  if (!parsed.hasDtEnd) {
+    parsed.event.endYear = parsed.event.startYear;
+    parsed.event.endMonth = parsed.event.startMonth;
+    parsed.event.endDay = parsed.event.startDay;
+    parsed.event.endHour = parsed.event.startHour;
+    parsed.event.endMinute = parsed.event.startMinute;
+    return;
+  }
+
+  if (parsed.event.allDay) {
+    addDays(parsed.event.endYear, parsed.event.endMonth, parsed.event.endDay, -1);
+    parsed.event.endHour = 23;
+    parsed.event.endMinute = 59;
+    return;
+  }
+
+  if (parsed.event.endHour == 0 && parsed.event.endMinute == 0 &&
+      dateToDays(parsed.event.endYear, parsed.event.endMonth, parsed.event.endDay) >
+          dateToDays(parsed.event.startYear, parsed.event.startMonth, parsed.event.startDay)) {
+    addDays(parsed.event.endYear, parsed.event.endMonth, parsed.event.endDay, -1);
+  }
+}
+
+bool parseRRule(const std::string& rruleString, RecurrenceRule& rule) {
+  size_t start = 0;
+  while (start < rruleString.size()) {
+    size_t end = rruleString.find(';', start);
+    if (end == std::string::npos) end = rruleString.size();
+    const std::string part = rruleString.substr(start, end - start);
+    size_t eq = part.find('=');
+    if (eq != std::string::npos) {
+      const std::string key = part.substr(0, eq);
+      const std::string value = part.substr(eq + 1);
+      if (key == "FREQ") {
+        if (value == "DAILY")
+          rule.freq = Frequency::DAILY;
+        else if (value == "WEEKLY")
+          rule.freq = Frequency::WEEKLY;
+        else if (value == "MONTHLY")
+          rule.freq = Frequency::MONTHLY;
+        else if (value == "YEARLY")
+          rule.freq = Frequency::YEARLY;
+      } else if (key == "INTERVAL") {
+        const int parsed = atoi(value.c_str());
+        rule.interval = parsed > 0 ? parsed : 1;
+      } else if (key == "COUNT") {
+        rule.count = atoi(value.c_str());
+      } else if (key == "UNTIL") {
+        rule.hasUntil = parsePropertyValue(value.c_str(), rule.until);
+      } else if (key == "BYMONTH") {
+        rule.byMonth = atoi(value.c_str());
+      } else if (key == "BYSETPOS") {
+        rule.bySetPos = atoi(value.c_str());
+      } else if (key == "BYDAY") {
+        size_t dayStart = 0;
+        while (dayStart < value.size()) {
+          size_t dayEnd = value.find(',', dayStart);
+          if (dayEnd == std::string::npos) dayEnd = value.size();
+          int weekday = 0;
+          if (parseWeekdayToken(value.substr(dayStart, dayEnd - dayStart), weekday)) {
+            rule.byDays.push_back(weekday);
+          }
+          dayStart = dayEnd + 1;
+        }
+      }
+    }
+    start = end + 1;
+  }
+
+  return rule.freq != Frequency::NONE;
+}
+
+std::string occurrenceKey(const std::string& uid, int year, int month, int day, int hour, int minute, bool allDay) {
+  char buffer[96];
+  snprintf(buffer, sizeof(buffer), "%s|%04d%02d%02d|%02d%02d|%d", uid.c_str(), year, month, day, hour, minute, allDay);
+  return buffer;
+}
+
+bool intersectsWindow(const CalendarEvent& event, int startDays, int endDaysExclusive) {
+  const int eventStart = dateToDays(event.startYear, event.startMonth, event.startDay);
+  const int eventEnd = dateToDays(event.endYear, event.endMonth, event.endDay);
+  return eventStart < endDaysExclusive && eventEnd >= startDays;
+}
+
+int nthWeekdayOfMonth(int year, int month, int weekday, int nth) {
+  if (nth == 0) return 0;
+  if (nth > 0) {
+    int day = 1;
+    while (dayOfWeekMonday0(year, month, day) != weekday) day++;
+    day += (nth - 1) * 7;
+    return day <= daysInMonth(year, month) ? day : 0;
+  }
+
+  int day = daysInMonth(year, month);
+  while (dayOfWeekMonday0(year, month, day) != weekday) day--;
+  day += (nth + 1) * 7;
+  return day >= 1 ? day : 0;
+}
+
+void appendOccurrence(std::vector<CalendarEvent>& outEvents, const CalendarEvent& baseEvent, const std::string& uid,
+                      int year, int month, int day, const std::vector<std::string>& overrides, int startDays,
+                      int endDaysExclusive) {
+  const std::string key =
+      occurrenceKey(uid, year, month, day, baseEvent.startHour, baseEvent.startMinute, baseEvent.allDay);
+  if (std::find(overrides.begin(), overrides.end(), key) != overrides.end()) return;
+  if (static_cast<int>(outEvents.size()) >= MAX_EVENTS) return;
+
+  CalendarEvent occurrence = baseEvent;
+  const int deltaDays =
+      dateToDays(year, month, day) - dateToDays(baseEvent.startYear, baseEvent.startMonth, baseEvent.startDay);
+  occurrence.startYear = year;
+  occurrence.startMonth = month;
+  occurrence.startDay = day;
+  occurrence.endYear = baseEvent.endYear;
+  occurrence.endMonth = baseEvent.endMonth;
+  occurrence.endDay = baseEvent.endDay;
+  addDays(occurrence.endYear, occurrence.endMonth, occurrence.endDay, deltaDays);
+
+  if (intersectsWindow(occurrence, startDays, endDaysExclusive)) {
+    outEvents.push_back(std::move(occurrence));
+  }
+}
+
+void expandRecurringEvent(const ParsedEvent& parsed, const std::vector<std::string>& overrides, int startDays,
+                          int endDaysExclusive, std::vector<CalendarEvent>& outEvents) {
+  RecurrenceRule rule;
+  if (!parseRRule(parsed.rrule, rule)) return;
+
+  const int dtStartDays = dateToDays(parsed.event.startYear, parsed.event.startMonth, parsed.event.startDay);
+  const int untilDays = rule.hasUntil ? dateToDays(rule.until.year, rule.until.month, rule.until.day) : 0;
+  int produced = 0;
+
+  auto shouldStop = [&](int year, int month, int day) {
+    if (rule.count > 0 && produced >= rule.count) return true;
+    if (rule.hasUntil && dateToDays(year, month, day) > untilDays) return true;
+    return false;
+  };
+
+  if (rule.freq == Frequency::YEARLY) {
+    for (int year = parsed.event.startYear; year <= parsed.event.startYear + 20; year += rule.interval) {
+      int month = rule.byMonth > 0 ? rule.byMonth : parsed.event.startMonth;
+      int day = parsed.event.startDay;
+      if (month == parsed.event.startMonth && year == parsed.event.startYear) {
+        if (!shouldStop(year, month, day)) {
+          appendOccurrence(outEvents, parsed.event, parsed.uid, year, month, day, overrides, startDays,
+                           endDaysExclusive);
+          produced++;
+        }
+        continue;
+      }
+      if (day > daysInMonth(year, month) || shouldStop(year, month, day)) break;
+      appendOccurrence(outEvents, parsed.event, parsed.uid, year, month, day, overrides, startDays, endDaysExclusive);
+      produced++;
+      if (dateToDays(year, month, day) >= endDaysExclusive) break;
+    }
+    return;
+  }
+
+  if (rule.freq == Frequency::MONTHLY && !rule.byDays.empty() && rule.bySetPos != 0) {
+    int year = parsed.event.startYear;
+    int month = parsed.event.startMonth;
+    while (true) {
+      int day = nthWeekdayOfMonth(year, month, rule.byDays.front(), rule.bySetPos);
+      if (day > 0 && dateToDays(year, month, day) >= dtStartDays) {
+        if (shouldStop(year, month, day)) break;
+        appendOccurrence(outEvents, parsed.event, parsed.uid, year, month, day, overrides, startDays, endDaysExclusive);
+        produced++;
+        if (dateToDays(year, month, day) >= endDaysExclusive) break;
+      }
+
+      month += rule.interval;
+      while (month > 12) {
+        month -= 12;
+        year++;
+      }
+      if (year > parsed.event.startYear + 10) break;
+    }
+    return;
+  }
+
+  if (rule.freq == Frequency::WEEKLY) {
+    std::vector<int> weekdays = rule.byDays;
+    if (weekdays.empty()) {
+      weekdays.push_back(dayOfWeekMonday0(parsed.event.startYear, parsed.event.startMonth, parsed.event.startDay));
+    }
+
+    const int baseWeekStart =
+        dtStartDays - dayOfWeekMonday0(parsed.event.startYear, parsed.event.startMonth, parsed.event.startDay);
+    for (int weekStart = baseWeekStart; weekStart < endDaysExclusive + 7; weekStart += rule.interval * 7) {
+      for (int weekday : weekdays) {
+        int occurrenceDays = weekStart + weekday;
+        if (occurrenceDays < dtStartDays) continue;
+        int year, month, day;
+        daysToDate(occurrenceDays, year, month, day);
+        if (shouldStop(year, month, day)) return;
+        appendOccurrence(outEvents, parsed.event, parsed.uid, year, month, day, overrides, startDays, endDaysExclusive);
+        produced++;
+        if (rule.count > 0 && produced >= rule.count) return;
+      }
+    }
+    return;
+  }
+
+  if (rule.freq == Frequency::DAILY) {
+    int year = parsed.event.startYear;
+    int month = parsed.event.startMonth;
+    int day = parsed.event.startDay;
+    while (!shouldStop(year, month, day) && dateToDays(year, month, day) < endDaysExclusive) {
+      appendOccurrence(outEvents, parsed.event, parsed.uid, year, month, day, overrides, startDays, endDaysExclusive);
+      produced++;
+      addDays(year, month, day, rule.interval);
+    }
+    return;
+  }
+
+  if (rule.freq == Frequency::MONTHLY) {
+    int year = parsed.event.startYear;
+    int month = parsed.event.startMonth;
+    const int originalDay = parsed.event.startDay;
+    while (true) {
+      if (originalDay <= daysInMonth(year, month)) {
+        if (shouldStop(year, month, originalDay)) break;
+        appendOccurrence(outEvents, parsed.event, parsed.uid, year, month, originalDay, overrides, startDays,
+                         endDaysExclusive);
+        produced++;
+        if (dateToDays(year, month, originalDay) >= endDaysExclusive) break;
+      }
+
+      month += rule.interval;
+      while (month > 12) {
+        month -= 12;
+        year++;
+      }
+      if (year > parsed.event.startYear + 10) break;
+    }
+  }
+}
+
+std::string buildCalendarQueryXml(int startDays, int endDaysExclusive) {
+  int startYear, startMonth, startDay;
+  int endYear, endMonth, endDay;
+  daysToDate(startDays - 1, startYear, startMonth, startDay);
+  daysToDate(endDaysExclusive + 1, endYear, endMonth, endDay);
+
+  char request[512];
+  snprintf(request, sizeof(request),
+           "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+           "<c:calendar-query xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\">"
+           "<d:prop>"
+           "<d:getetag/>"
+           "<c:calendar-data>"
+           "<c:expand start=\"%04d%02d%02dT000000Z\" end=\"%04d%02d%02dT000000Z\"/>"
+           "</c:calendar-data>"
+           "</d:prop>"
+           "<c:filter>"
+           "<c:comp-filter name=\"VCALENDAR\">"
+           "<c:comp-filter name=\"VEVENT\">"
+           "<c:time-range start=\"%04d%02d%02dT000000Z\" end=\"%04d%02d%02dT000000Z\"/>"
+           "</c:comp-filter>"
+           "</c:comp-filter>"
+           "</c:filter>"
+           "</c:calendar-query>",
+           startYear, startMonth, startDay, endYear, endMonth, endDay, startYear, startMonth, startDay, endYear,
+           endMonth, endDay);
+  return request;
+}
+
+void parseCalendarDataFragment(const String& calendarData, std::vector<ParsedEvent>& parsedEvents) {
+  if (calendarData.isEmpty()) return;
+
+  String unfolded = calendarData;
+  unfoldICalLines(unfolded);
+
+  ParsedEvent current = {};
+  bool inEvent = false;
+  int lineStart = 0;
+  const int bodyLen = unfolded.length();
+  const char* body = unfolded.c_str();
+
+  for (int i = 0; i <= bodyLen; i++) {
+    if (i < bodyLen && body[i] != '\n') continue;
+
+    int lineEnd = i;
+    if (lineEnd > lineStart && body[lineEnd - 1] == '\r') lineEnd--;
+    const int lineLen = lineEnd - lineStart;
+
+    if (lineLen >= 12 && strncmp(body + lineStart, "BEGIN:VEVENT", 12) == 0) {
+      inEvent = true;
+      current = {};
+    } else if (inEvent && lineLen >= 10 && strncmp(body + lineStart, "END:VEVENT", 10) == 0) {
+      inEvent = false;
+      if (current.hasDtStart && static_cast<int>(parsedEvents.size()) < MAX_EVENTS * 2) {
+        normalizeEventRange(current);
+        parsedEvents.push_back(std::move(current));
+      }
+    } else if (inEvent) {
+      if (lineLen > 7 && strncmp(body + lineStart, "SUMMARY", 7) == 0) {
+        current.event.summary = extractPropertyValue(body + lineStart, lineLen, 7, MAX_SUMMARY_LEN);
+      } else if (lineLen > 8 && strncmp(body + lineStart, "LOCATION", 8) == 0) {
+        current.event.location = extractPropertyValue(body + lineStart, lineLen, 8, MAX_LOCATION_LEN);
+      } else if (lineLen > 7 && strncmp(body + lineStart, "DTSTART", 7) == 0) {
+        ICalDateTime dtStart;
+        if (parsePropertyValue(body + lineStart + 7, dtStart)) {
+          current.event.startYear = dtStart.year;
+          current.event.startMonth = dtStart.month;
+          current.event.startDay = dtStart.day;
+          current.event.startHour = dtStart.hour;
+          current.event.startMinute = dtStart.minute;
+          current.event.allDay = dtStart.allDay;
+          current.hasDtStart = true;
+        }
+      } else if (lineLen > 5 && strncmp(body + lineStart, "DTEND", 5) == 0) {
+        ICalDateTime dtEnd;
+        if (parsePropertyValue(body + lineStart + 5, dtEnd)) {
+          current.event.endYear = dtEnd.year;
+          current.event.endMonth = dtEnd.month;
+          current.event.endDay = dtEnd.day;
+          current.event.endHour = dtEnd.hour;
+          current.event.endMinute = dtEnd.minute;
+          current.hasDtEnd = true;
+        }
+      } else if (lineLen >= 4 && strncmp(body + lineStart, "UID:", 4) == 0) {
+        current.uid = extractPropertyValue(body + lineStart, lineLen, 3, 96);
+      }
+    }
+
+    lineStart = i + 1;
+  }
+}
+
+bool parseCalendarQueryResponse(const String& responseBody, std::vector<ParsedEvent>& parsedEvents) {
+  int searchFrom = 0;
+  while (true) {
+    int openTagStart = responseBody.indexOf("<", searchFrom);
+    if (openTagStart < 0) break;
+    int openTagEnd = responseBody.indexOf('>', openTagStart);
+    if (openTagEnd < 0) break;
+
+    const String openTag = responseBody.substring(openTagStart + 1, openTagEnd);
+    if (!openTag.endsWith("calendar-data") &&
+        !openTag.endsWith("calendar-data xmlns=\"urn:ietf:params:xml:ns:caldav\"")) {
+      searchFrom = openTagEnd + 1;
+      continue;
+    }
+
+    int closeTagStart = responseBody.indexOf("</", openTagEnd + 1);
+    if (closeTagStart < 0) break;
+    int closeTagEnd = responseBody.indexOf('>', closeTagStart);
+    if (closeTagEnd < 0) break;
+
+    const String closeTag = responseBody.substring(closeTagStart + 2, closeTagEnd);
+    if (!closeTag.endsWith("calendar-data")) {
+      searchFrom = openTagEnd + 1;
+      continue;
+    }
+
+    parseCalendarDataFragment(responseBody.substring(openTagEnd + 1, closeTagStart), parsedEvents);
+    searchFrom = closeTagEnd + 1;
+  }
+
+  return !parsedEvents.empty();
+}
+
 }  // namespace
 
 bool CalendarEvent::operator<(const CalendarEvent& other) const {
@@ -149,8 +652,9 @@ bool CalendarEvent::operator<(const CalendarEvent& other) const {
 
 CalDavClient::Error CalDavClient::fetchEvents(std::vector<CalendarEvent>& outEvents, int daysBack, int daysForward) {
   if (!CALDAV_STORE.hasCredentials()) {
-    LOG_DBG("CAL", "%s", CALDAV_STORE.getConfigError().empty() ? "Missing /.crosspoint/caldav.json"
-                                                                : CALDAV_STORE.getConfigError().c_str());
+    LOG_DBG("CAL", "%s",
+            CALDAV_STORE.getConfigError().empty() ? "Missing /.crosspoint/caldav.json"
+                                                  : CALDAV_STORE.getConfigError().c_str());
     return NO_CREDENTIALS;
   }
 
@@ -162,52 +666,7 @@ CalDavClient::Error CalDavClient::fetchEvents(std::vector<CalendarEvent>& outEve
   const std::string& url = CALDAV_STORE.getCalendarUrl();
   LOG_DBG("CAL", "Fetching calendar: %s", url.c_str());
 
-  String responseBody;
   int lastCode = -1;
-
-  for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    if (attempt > 0) {
-      if (!isWifiConnected()) return NETWORK_ERROR;
-      LOG_DBG("CAL", "Retry %d/%d", attempt, MAX_RETRIES);
-      vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
-    }
-
-    HTTPClient http;
-    std::unique_ptr<WiFiClientSecure> secureClient;
-    WiFiClient plainClient;
-    beginAuthRequest(http, secureClient, plainClient, url);
-
-    lastCode = http.GET();
-
-    if (lastCode == 200) {
-      int len = http.getSize();
-      if (len > MAX_RESPONSE_SIZE) {
-        LOG_ERR("CAL", "Response too large: %d bytes", len);
-        http.end();
-        return SERVER_ERROR;
-      }
-      responseBody = http.getString();
-      http.end();
-      break;
-    }
-
-    http.end();
-
-    if (lastCode == 401) return AUTH_FAILED;
-    if (!isTransientError(lastCode)) {
-      LOG_ERR("CAL", "Fetch failed: %d", lastCode);
-      return (lastCode < 0) ? NETWORK_ERROR : SERVER_ERROR;
-    }
-    LOG_DBG("CAL", "Transient error: %d", lastCode);
-  }
-
-  if (lastCode != 200) {
-    LOG_ERR("CAL", "All retries failed: %d", lastCode);
-    return (lastCode < 0) ? NETWORK_ERROR : SERVER_ERROR;
-  }
-
-  // Unfold continuation lines
-  unfoldICalLines(responseBody);
 
   // Get current date from ESP32 RTC (set by SNTP or manual)
   struct tm now;
@@ -222,83 +681,67 @@ CalDavClient::Error CalDavClient::fetchEvents(std::vector<CalendarEvent>& outEve
 
   LOG_DBG("CAL", "Filtering events: %d days back, %d days forward", daysBack, daysForward);
 
-  // Parse VEVENT blocks line by line
+  std::vector<ParsedEvent> parsedEvents;
+  parsedEvents.reserve(128);
   outEvents.clear();
-  outEvents.reserve(32);
+  outEvents.reserve(64);
 
-  bool inEvent = false;
-  bool hasRRule = false;
-  CalendarEvent current = {};
-  bool hasDtStart = false;
-
-  int lineStart = 0;
-  int bodyLen = responseBody.length();
-  const char* body = responseBody.c_str();
-
-  for (int i = 0; i <= bodyLen; i++) {
-    if (i < bodyLen && body[i] != '\n') continue;
-
-    // Process line [lineStart, i)
-    int lineEnd = i;
-    if (lineEnd > lineStart && body[lineEnd - 1] == '\r') lineEnd--;
-    int lineLen = lineEnd - lineStart;
-
-    if (lineLen >= 12 && strncmp(body + lineStart, "BEGIN:VEVENT", 12) == 0) {
-      inEvent = true;
-      hasRRule = false;
-      hasDtStart = false;
-      current = {};
-    } else if (inEvent && lineLen >= 10 && strncmp(body + lineStart, "END:VEVENT", 10) == 0) {
-      inEvent = false;
-
-      // Skip recurring events in v1
-      if (hasRRule) {
-        lineStart = i + 1;
-        continue;
-      }
-
-      if (hasDtStart) {
-        int eventDays = dateToDays(current.startYear, current.startMonth, current.startDay);
-        if (eventDays >= startDays && eventDays < endDays && static_cast<int>(outEvents.size()) < MAX_EVENTS) {
-          outEvents.push_back(std::move(current));
-        }
-      }
-    } else if (inEvent) {
-      // Extract properties (truncate long values to prevent memory bloat)
-      if (lineLen > 8 && strncmp(body + lineStart, "SUMMARY:", 8) == 0) {
-        int len = std::min(lineLen - 8, MAX_SUMMARY_LEN);
-        current.summary.assign(body + lineStart + 8, len);
-      } else if (lineLen > 7 && strncmp(body + lineStart, "SUMMARY", 7) == 0) {
-        // SUMMARY;LANGUAGE=...:value
-        const char* colonPos = static_cast<const char*>(memchr(body + lineStart, ':', lineLen));
-        if (colonPos) {
-          int valStart = colonPos - body + 1;
-          int len = std::min(lineEnd - valStart, MAX_SUMMARY_LEN);
-          current.summary.assign(body + valStart, len);
-        }
-      } else if (lineLen > 9 && strncmp(body + lineStart, "LOCATION:", 9) == 0) {
-        int len = std::min(lineLen - 9, MAX_LOCATION_LEN);
-        current.location.assign(body + lineStart + 9, len);
-      } else if (lineLen > 8 && strncmp(body + lineStart, "LOCATION", 8) == 0) {
-        const char* colonPos = static_cast<const char*>(memchr(body + lineStart, ':', lineLen));
-        if (colonPos) {
-          int valStart = colonPos - body + 1;
-          int len = std::min(lineEnd - valStart, MAX_LOCATION_LEN);
-          current.location.assign(body + valStart, len);
-        }
-      } else if (lineLen > 7 && strncmp(body + lineStart, "DTSTART", 7) == 0) {
-        // Could be DTSTART:20260405T090000Z or DTSTART;VALUE=DATE:20260405 or DTSTART;TZID=...:...
-        const char* colonPos = static_cast<const char*>(memchr(body + lineStart, ':', lineLen));
-        if (colonPos) {
-          hasDtStart = parseICalDate(body + lineStart + 7, current.startYear, current.startMonth, current.startDay,
-                                     current.startHour, current.startMinute, current.allDay);
-        }
-      } else if (lineLen >= 6 && strncmp(body + lineStart, "RRULE:", 6) == 0) {
-        hasRRule = true;
-      }
+  for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      if (!isWifiConnected()) return NETWORK_ERROR;
+      LOG_DBG("CAL", "Retry %d/%d", attempt, MAX_RETRIES);
+      vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
     }
 
-    lineStart = i + 1;
+    HTTPClient http;
+    std::unique_ptr<WiFiClientSecure> secureClient;
+    WiFiClient plainClient;
+    beginAuthRequest(http, secureClient, plainClient, url);
+    http.addHeader("Content-Type", "application/xml; charset=utf-8");
+    http.addHeader("Depth", "1");
+
+    const std::string queryXml = buildCalendarQueryXml(startDays, endDays);
+    lastCode =
+        http.sendRequest("REPORT", reinterpret_cast<uint8_t*>(const_cast<char*>(queryXml.c_str())), queryXml.length());
+
+    if (lastCode == 207) {
+      int len = http.getSize();
+      if (len > MAX_RESPONSE_SIZE) {
+        LOG_ERR("CAL", "Response too large: %d bytes", len);
+        http.end();
+        return SERVER_ERROR;
+      }
+      String responseBody = http.getString();
+      if (!parseCalendarQueryResponse(responseBody, parsedEvents)) {
+        http.end();
+        LOG_ERR("CAL", "No VEVENT data in calendar-query response");
+        return PARSE_ERROR;
+      }
+
+      http.end();
+      break;
+    }
+
+    http.end();
+
+    if (lastCode == 401) return AUTH_FAILED;
+    if (!isTransientError(lastCode)) {
+      LOG_ERR("CAL", "Calendar query failed: %d", lastCode);
+      return (lastCode < 0) ? NETWORK_ERROR : SERVER_ERROR;
+    }
+    LOG_DBG("CAL", "Transient error: %d", lastCode);
+  }
+
+  if (lastCode != 207) {
+    LOG_ERR("CAL", "All retries failed: %d", lastCode);
+    return (lastCode < 0) ? NETWORK_ERROR : SERVER_ERROR;
+  }
+
+  for (const auto& parsed : parsedEvents) {
+    if (static_cast<int>(outEvents.size()) >= MAX_EVENTS) break;
+    if (intersectsWindow(parsed.event, startDays, endDays)) {
+      outEvents.push_back(parsed.event);
+    }
   }
 
   std::sort(outEvents.begin(), outEvents.end());

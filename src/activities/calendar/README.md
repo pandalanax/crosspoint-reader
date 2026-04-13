@@ -11,14 +11,17 @@ Month grid calendar that syncs with a CalDAV server (tested with [Radicale](http
    - **password**
 3. Safely eject the SD card and start the Calendar activity
 
-The server must support a simple HTTP GET that returns the full `.ics` file (Radicale does this natively).
+The server must support CalDAV `REPORT` requests with calendar queries. Radicale does.
 
 ## How It Works
 
-- On first open, connects to WiFi and fetches the full calendar (30 days back, 120 days forward)
-- Parses iCalendar VEVENT blocks (skips recurring events with RRULE)
+- On first open, connects to WiFi and fetches only the needed calendar window (30 days back, 120 days forward)
+- Uses CalDAV `calendar-query` with server-side expansion, so recurring events in that window are included
+- Parses normal timed events, all-day events, and multi-day events
+- Treats UTC timestamps as Europe/Brussels local time on-device
 - Caches events to SD card for offline browsing
 - On subsequent opens, shows cached events instantly
+- Refresh status, errors, and success are shown as popups over the calendar view
 
 ## Controls
 
@@ -73,3 +76,4 @@ Failed uploads are retried on subsequent refreshes. You can rename the "Meeting"
 - **Today**: filled black circle with white text
 - **Cursor**: thick border rectangle
 - **Event indicator**: small dot below the day number
+- **Refresh / errors**: popup overlay, calendar stays visible in the background

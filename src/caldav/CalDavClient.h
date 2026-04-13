@@ -11,6 +11,8 @@ struct CalendarEvent {
   std::string location;
   int startYear, startMonth, startDay;
   int startHour, startMinute;
+  int endYear, endMonth, endDay;
+  int endHour, endMinute;
   bool allDay;
 
   // For display sorting
