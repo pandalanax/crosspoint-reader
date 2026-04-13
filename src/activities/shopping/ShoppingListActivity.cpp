@@ -395,56 +395,37 @@ void ShoppingListActivity::render(RenderLock&&) {
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
 
-  if (state == State::FETCHING) {
-    renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, contentTop + 20, "Fetching shopping list...");
-    renderer.displayBuffer();
-    return;
-  }
-
-  if (state == State::ERROR) {
-    renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, contentTop + 20, errorMessage.c_str());
-    renderer.displayBuffer();
-    return;
-  }
-
-  if (state == State::WIFI_SELECTION) {
-    renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, contentTop + 20, "Connecting to WiFi...");
-    renderer.displayBuffer();
-    return;
-  }
-
   // State::DISPLAYING
-  if (displayRows.empty()) {
+  if (displayRows.empty() && state == State::DISPLAYING) {
     renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, contentTop + 20, "Shopping list is empty");
-    renderer.displayBuffer();
-    return;
   }
 
-  // Render the list — checked items get a strikethrough line drawn over them
   const Rect listRect{0, contentTop, pageWidth, contentHeight};
-  GUI.drawList(renderer, listRect, static_cast<int>(displayRows.size()), static_cast<int>(selectorIndex),
-               [this](int index) -> std::string {
-                 const auto& row = displayRows[index];
-                 if (row.type == DisplayRow::CATEGORY_HEADER) {
-                   return "-- " + row.headerText + " --";
-                 }
-                 const auto& item = items[row.itemIndex];
-                 char amountBuf[16];
-                 if (item.amount == static_cast<int>(item.amount)) {
-                   snprintf(amountBuf, sizeof(amountBuf), "%d", static_cast<int>(item.amount));
-                 } else {
-                   snprintf(amountBuf, sizeof(amountBuf), "%.1f", item.amount);
-                 }
-                 std::string line = amountBuf;
-                 if (!item.unitName.empty()) {
-                   line += " " + item.unitName;
-                 }
-                 line += " " + item.foodName;
-                 return line;
-               });
+  if (!displayRows.empty()) {
+    GUI.drawList(renderer, listRect, static_cast<int>(displayRows.size()), static_cast<int>(selectorIndex),
+                 [this](int index) -> std::string {
+                   const auto& row = displayRows[index];
+                   if (row.type == DisplayRow::CATEGORY_HEADER) {
+                     return "-- " + row.headerText + " --";
+                   }
+                   const auto& item = items[row.itemIndex];
+                   char amountBuf[16];
+                   if (item.amount == static_cast<int>(item.amount)) {
+                     snprintf(amountBuf, sizeof(amountBuf), "%d", static_cast<int>(item.amount));
+                   } else {
+                     snprintf(amountBuf, sizeof(amountBuf), "%.1f", item.amount);
+                   }
+                   std::string line = amountBuf;
+                   if (!item.unitName.empty()) {
+                     line += " " + item.unitName;
+                   }
+                   line += " " + item.foodName;
+                   return line;
+                 });
+  }
 
   // Draw strikethrough lines over checked items
-  {
+  if (!displayRows.empty()) {
     const int rowHeight = metrics.listRowHeight;
     const int pageItems = listRect.height / rowHeight;
     const int pageStart = static_cast<int>(selectorIndex) / pageItems * pageItems;
@@ -462,6 +443,14 @@ void ShoppingListActivity::render(RenderLock&&) {
       bool inverted = (i == static_cast<int>(selectorIndex));
       renderer.drawLine(padX, lineY, pageWidth - padX * 2, lineY, !inverted);
     }
+  }
+
+  if (state == State::WIFI_SELECTION) {
+    GUI.drawPopup(renderer, "Connecting to WiFi...");
+  } else if (state == State::FETCHING) {
+    GUI.drawPopup(renderer, "Fetching shopping list...");
+  } else if (state == State::ERROR) {
+    GUI.drawPopup(renderer, errorMessage.c_str());
   }
 
   // Button hints — long-press Back refreshes
