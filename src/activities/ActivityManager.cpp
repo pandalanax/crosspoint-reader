@@ -18,6 +18,7 @@
 #include "settings/SettingsActivity.h"
 #include "shopping/ShoppingListActivity.h"
 #include "util/FullScreenMessageActivity.h"
+#include "wordle/WordleActivity.h"
 
 void ActivityManager::begin() {
   xTaskCreate(&renderTaskTrampoline, "ActivityManagerRender",
@@ -217,6 +218,8 @@ void ActivityManager::goToShoppingList() {
 void ActivityManager::goToCalendar() { replaceActivity(std::make_unique<CalendarActivity>(renderer, mappedInput)); }
 
 void ActivityManager::goToContacts() { replaceActivity(std::make_unique<ContactsActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToWordle() { replaceActivity(std::make_unique<WordleActivity>(renderer, mappedInput)); }
 
 void ActivityManager::goHome() { replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput)); }
 

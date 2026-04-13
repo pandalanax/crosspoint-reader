@@ -21,7 +21,7 @@
 #include "fontIds.h"
 
 int HomeActivity::getMenuItemCount() const {
-  int count = 7;  // File Browser, Recents, File transfer, Shopping List, Calendar, Contacts, Settings
+  int count = 8;  // File Browser, Recents, File transfer, Shopping List, Calendar, Contacts, Wordle, Settings
   if (!recentBooks.empty()) {
     count += recentBooks.size();
   }
@@ -195,6 +195,7 @@ void HomeActivity::loop() {
     const int shoppingListIdx = idx++;
     const int calendarIdx = idx++;
     const int contactsIdx = idx++;
+    const int wordleIdx = idx++;
     const int settingsIdx = idx;
 
     if (selectorIndex < recentBooks.size()) {
@@ -213,6 +214,8 @@ void HomeActivity::loop() {
       onCalendarOpen();
     } else if (menuSelectedIndex == contactsIdx) {
       onContactsOpen();
+    } else if (menuSelectedIndex == wordleIdx) {
+      onWordleOpen();
     } else if (menuSelectedIndex == settingsIdx) {
       onSettingsOpen();
     }
@@ -234,10 +237,15 @@ void HomeActivity::render(RenderLock&&) {
                           std::bind(&HomeActivity::storeCoverBuffer, this));
 
   // Build menu items dynamically
-  std::vector<const char*> menuItems = {
-      tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_FILE_TRANSFER), "Shopping List",
-      "Calendar",           tr(STR_CONTACTS),          tr(STR_SETTINGS_TITLE)};
-  std::vector<UIIcon> menuIcons = {Folder, Recent, Transfer, File, File, File, Settings};
+  std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES),
+                                        tr(STR_MENU_RECENT_BOOKS),
+                                        tr(STR_FILE_TRANSFER),
+                                        "Shopping List",
+                                        "Calendar",
+                                        tr(STR_CONTACTS),
+                                        "Wordle",
+                                        tr(STR_SETTINGS_TITLE)};
+  std::vector<UIIcon> menuIcons = {Folder, Recent, Transfer, File, File, File, Book, Settings};
 
   if (hasOpdsServers) {
     menuItems.insert(menuItems.begin() + 2, tr(STR_OPDS_BROWSER));
@@ -283,3 +291,4 @@ void HomeActivity::onShoppingListOpen() { activityManager.goToShoppingList(); }
 
 void HomeActivity::onCalendarOpen() { activityManager.goToCalendar(); }
 void HomeActivity::onContactsOpen() { activityManager.goToContacts(); }
+void HomeActivity::onWordleOpen() { activityManager.goToWordle(); }
