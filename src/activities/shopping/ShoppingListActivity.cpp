@@ -34,6 +34,10 @@ std::string ShoppingListActivity::fetchFailedNoCacheMessage(const char* fetchErr
   return msg;
 }
 
+bool ShoppingListActivity::containsId(const std::vector<int>& ids, int id) {
+  return std::find(ids.begin(), ids.end(), id) != ids.end();
+}
+
 void ShoppingListActivity::onEnter() {
   Activity::onEnter();
 
@@ -95,7 +99,28 @@ void ShoppingListActivity::onWifiComplete(bool connected) {
 }
 
 void ShoppingListActivity::fetchList() {
-  TandoorClient::Error err = TandoorClient::fetchShoppingList(items);
+  const std::vector<ShoppingListItem> localItems = items;
+  std::vector<int> pendingIds;
+  pendingIds.reserve(localItems.size());
+  for (const auto& item : localItems) {
+    if (item.checked && item.pendingSync) {
+      pendingIds.push_back(item.id);
+    }
+  }
+
+  std::vector<int> remainingPendingIds;
+  remainingPendingIds.reserve(pendingIds.size());
+  for (int itemId : pendingIds) {
+    const auto err = TandoorClient::setItemChecked(itemId, true);
+    if (err == TandoorClient::OK || err == TandoorClient::NOT_FOUND) {
+      continue;
+    }
+    LOG_ERR("SHOP", "Sync failed for item %d: %s", itemId, TandoorClient::errorString(err));
+    remainingPendingIds.push_back(itemId);
+  }
+
+  std::vector<ShoppingListItem> fetchedItems;
+  TandoorClient::Error err = TandoorClient::fetchShoppingList(fetchedItems);
   if (err != TandoorClient::OK) {
     // Try cache as fallback
     if (loadCacheFromSd()) {
@@ -110,6 +135,7 @@ void ShoppingListActivity::fetchList() {
     return;
   }
 
+  mergeFetchedItems(std::move(fetchedItems), localItems, remainingPendingIds);
   saveCacheToSd();
   buildDisplayRows();
   selectorIndex = 0;
@@ -121,6 +147,55 @@ void ShoppingListActivity::fetchList() {
   WiFi.mode(WIFI_OFF);
 
   requestUpdate();
+}
+
+void ShoppingListActivity::mergeFetchedItems(std::vector<ShoppingListItem>&& fetchedItems,
+                                             const std::vector<ShoppingListItem>& localItems,
+                                             const std::vector<int>& pendingIds) {
+  items.clear();
+  items.reserve(fetchedItems.size() + pendingIds.size());
+  std::vector<int> fetchedIds;
+  std::vector<int> serverCheckedIds;
+  fetchedIds.reserve(fetchedItems.size());
+  serverCheckedIds.reserve(fetchedItems.size());
+
+  for (auto& fetched : fetchedItems) {
+    fetchedIds.push_back(fetched.id);
+    if (fetched.checked) {
+      serverCheckedIds.push_back(fetched.id);
+      continue;
+    }
+
+    fetched.pendingSync = false;
+    if (containsId(pendingIds, fetched.id)) {
+      fetched.checked = true;
+      fetched.pendingSync = true;
+    } else {
+      fetched.checked = false;
+    }
+    items.push_back(std::move(fetched));
+  }
+
+  for (const auto& local : localItems) {
+    if (!(local.checked && local.pendingSync) || !containsId(pendingIds, local.id)) {
+      continue;
+    }
+    if (containsId(serverCheckedIds, local.id)) {
+      continue;
+    }
+
+    const auto exists = std::find_if(items.begin(), items.end(),
+                                     [itemId = local.id](const ShoppingListItem& item) { return item.id == itemId; });
+    if (exists == items.end() && !containsId(fetchedIds, local.id)) {
+      items.push_back(local);
+    }
+  }
+
+  std::sort(items.begin(), items.end(), [](const ShoppingListItem& a, const ShoppingListItem& b) {
+    if (a.checked != b.checked) return !a.checked;
+    if (a.category != b.category) return a.category < b.category;
+    return a.foodName < b.foodName;
+  });
 }
 
 void ShoppingListActivity::buildDisplayRows() {
@@ -156,9 +231,10 @@ void ShoppingListActivity::toggleCurrentItem() {
 
   auto& item = items[row.itemIndex];
   item.checked = !item.checked;
+  item.pendingSync = item.checked;
   userActive = true;
 
-  // Purely local toggle — no network sync while shopping
+  // Local toggle stays visible until a later refresh confirms sync.
   saveCacheToSd();
   requestUpdate();
 }
@@ -184,6 +260,7 @@ bool ShoppingListActivity::saveCacheToSd() const {
     obj["unit"] = item.unitName;
     obj["amount"] = item.amount;
     obj["checked"] = item.checked;
+    obj["pendingSync"] = item.pendingSync;
   }
 
   String json;
@@ -229,6 +306,7 @@ bool ShoppingListActivity::loadCacheFromSd() {
     item.unitName = obj["unit"] | "";
     item.amount = obj["amount"] | 0.0f;
     item.checked = obj["checked"] | false;
+    item.pendingSync = obj["pendingSync"].is<bool>() ? static_cast<bool>(obj["pendingSync"]) : item.checked;
     items.push_back(std::move(item));
   }
 

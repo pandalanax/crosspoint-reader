@@ -221,6 +221,7 @@ TandoorClient::Error TandoorClient::setItemChecked(int itemId, bool checked) {
 
     if (lastCode == 200) return OK;
     if (lastCode == 401) return AUTH_FAILED;
+    if (lastCode == 404) return NOT_FOUND;
     if (!isTransientError(lastCode)) break;
 
     LOG_DBG("TDR", "PATCH transient error: %d", lastCode);
@@ -241,6 +242,8 @@ const char* TandoorClient::errorString(Error error) {
       return "Network error";
     case AUTH_FAILED:
       return "Authentication failed";
+    case NOT_FOUND:
+      return "Item not found on server";
     case SERVER_ERROR:
       return "Server error";
     case JSON_ERROR:

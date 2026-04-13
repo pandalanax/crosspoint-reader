@@ -59,6 +59,9 @@ class ShoppingListActivity final : public Activity {
   void toggleCurrentItem();
   bool saveCacheToSd() const;
   bool loadCacheFromSd();
+  void mergeFetchedItems(std::vector<ShoppingListItem>&& fetchedItems, const std::vector<ShoppingListItem>& localItems,
+                         const std::vector<int>& pendingIds);
+  static bool containsId(const std::vector<int>& ids, int id);
   static std::string cacheMissingMessage();
   static std::string wifiRequiredMessage();
   static std::string fetchFailedNoCacheMessage(const char* fetchError);

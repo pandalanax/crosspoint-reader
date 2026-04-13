@@ -13,6 +13,7 @@ struct ShoppingListItem {
   std::string unitName;  // nullable — may be empty
   float amount;
   bool checked;
+  bool pendingSync = false;
 };
 
 /**
@@ -27,7 +28,7 @@ struct ShoppingListItem {
  */
 class TandoorClient {
  public:
-  enum Error { OK = 0, NO_CREDENTIALS, NETWORK_ERROR, AUTH_FAILED, SERVER_ERROR, JSON_ERROR };
+  enum Error { OK = 0, NO_CREDENTIALS, NETWORK_ERROR, AUTH_FAILED, NOT_FOUND, SERVER_ERROR, JSON_ERROR };
 
   /**
    * Fetch all shopping list entries (unchecked first, then checked).
