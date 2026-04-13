@@ -71,6 +71,7 @@ void ShoppingListActivity::onExit() {
   if (!items.empty()) {
     saveCacheToSd();
   }
+  successPopupUntilMs = 0;
   items.clear();
   displayRows.clear();
   WiFi.mode(WIFI_OFF);
@@ -141,6 +142,7 @@ void ShoppingListActivity::fetchList() {
   selectorIndex = 0;
   state = State::DISPLAYING;
   userActive = false;  // Allow auto-sleep after refresh — user can put device down
+  successPopupUntilMs = millis() + SUCCESS_POPUP_DURATION_MS;
 
   // Turn off WiFi to save power while shopping
   WiFi.disconnect();
@@ -319,6 +321,11 @@ bool ShoppingListActivity::loadCacheFromSd() {
 }
 
 void ShoppingListActivity::loop() {
+  if (successPopupUntilMs != 0 && millis() >= successPopupUntilMs) {
+    successPopupUntilMs = 0;
+    requestUpdate();
+  }
+
   if (state != State::DISPLAYING) return;
 
   const int rowCount = static_cast<int>(displayRows.size());
@@ -451,6 +458,8 @@ void ShoppingListActivity::render(RenderLock&&) {
     GUI.drawPopup(renderer, "Fetching shopping list...");
   } else if (state == State::ERROR) {
     GUI.drawPopup(renderer, errorMessage.c_str());
+  } else if (successPopupUntilMs != 0) {
+    GUI.drawPopup(renderer, "Refresh successful");
   }
 
   // Button hints — long-press Back refreshes

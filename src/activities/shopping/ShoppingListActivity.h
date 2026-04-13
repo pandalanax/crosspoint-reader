@@ -37,6 +37,8 @@ class ShoppingListActivity final : public Activity {
   size_t selectorIndex = 0;
   std::vector<ShoppingListItem> items;
   std::string errorMessage;
+  unsigned long successPopupUntilMs = 0;
+  static constexpr unsigned long SUCCESS_POPUP_DURATION_MS = 1500;
 
   // When true, the user is actively browsing the list (prevent auto-sleep).
   // Set to false after a refresh completes so the device can sleep.
