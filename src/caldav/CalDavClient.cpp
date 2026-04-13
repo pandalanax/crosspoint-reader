@@ -149,7 +149,8 @@ bool CalendarEvent::operator<(const CalendarEvent& other) const {
 
 CalDavClient::Error CalDavClient::fetchEvents(std::vector<CalendarEvent>& outEvents, int daysBack, int daysForward) {
   if (!CALDAV_STORE.hasCredentials()) {
-    LOG_DBG("CAL", "No credentials configured");
+    LOG_DBG("CAL", "%s", CALDAV_STORE.getConfigError().empty() ? "Missing /.crosspoint/caldav.json"
+                                                                : CALDAV_STORE.getConfigError().c_str());
     return NO_CREDENTIALS;
   }
 
@@ -413,7 +414,8 @@ const char* CalDavClient::errorString(Error error) {
     case OK:
       return "Success";
     case NO_CREDENTIALS:
-      return "No CalDAV credentials configured";
+      return CALDAV_STORE.getConfigError().empty() ? "Missing /.crosspoint/caldav.json"
+                                                   : CALDAV_STORE.getConfigError().c_str();
     case NETWORK_ERROR:
       return "Network error";
     case AUTH_FAILED:

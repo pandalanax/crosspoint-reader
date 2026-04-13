@@ -4,11 +4,12 @@ Month grid calendar that syncs with a CalDAV server (tested with [Radicale](http
 
 ## Setup
 
-1. Open the device's web interface (connect via WiFi, go to `http://crosspoint.local`)
-2. In Settings, fill in:
-   - **CalDAV Calendar URL** -- the full `.ics` URL (e.g. `https://cal.example.com/user/calendar-id/`)
-   - **CalDAV Username**
-   - **CalDAV Password**
+1. Copy [`templates/caldav.template.json`](../../../templates/caldav.template.json) to `/.crosspoint/caldav.json` on the SD card
+2. Edit the file with:
+   - **calendarUrl** -- the full `.ics` URL (e.g. `https://cal.example.com/user/calendar-id/`)
+   - **username**
+   - **password**
+3. Safely eject the SD card and start the Calendar activity
 
 The server must support a simple HTTP GET that returns the full `.ics` file (Radicale does this natively).
 
@@ -63,6 +64,7 @@ Failed uploads are retried on subsequent refreshes. You can rename the "Meeting"
 
 | Path | Purpose |
 |------|---------|
+| `/.crosspoint/caldav.json` | CalDAV URL, username, and password |
 | `/.crosspoint/calendar_cache.json` | Cached events (auto-created on fetch) |
 | `/.crosspoint/calendar_pending.json` | Events created offline, awaiting sync |
 

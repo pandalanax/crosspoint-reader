@@ -25,9 +25,21 @@ bool CalDavCredentialStore::saveToFile() const {
 }
 
 bool CalDavCredentialStore::loadFromFile() {
-  if (!Storage.exists(CALDAV_SETTINGS_FILE)) return false;
+  calendarUrl.clear();
+  username.clear();
+  password.clear();
+
+  if (!Storage.exists(CALDAV_SETTINGS_FILE)) {
+    configError = "Missing /.crosspoint/caldav.json";
+    return false;
+  }
+
   String json = Storage.readFile(CALDAV_SETTINGS_FILE);
-  if (json.isEmpty()) return false;
+  if (json.isEmpty()) {
+    configError = "Empty /.crosspoint/caldav.json";
+    return false;
+  }
+
   return JsonSettingsIO::loadCalDav(*this, json.c_str());
 }
 
@@ -48,7 +60,8 @@ bool JsonSettingsIO::loadCalDav(CalDavCredentialStore& store, const char* json) 
   JsonDocument doc;
   auto error = deserializeJson(doc, json);
   if (error) {
-    LOG_ERR("CAL", "JSON parse error: %s", error.c_str());
+    store.configError = "Invalid /.crosspoint/caldav.json";
+    LOG_ERR("CAL", "Invalid /.crosspoint/caldav.json: %s", error.c_str());
     return false;
   }
 
@@ -60,6 +73,20 @@ bool JsonSettingsIO::loadCalDav(CalDavCredentialStore& store, const char* json) 
     store.password = doc["password"] | std::string("");
   }
 
+  if (store.calendarUrl.empty()) {
+    store.configError = "Missing calendarUrl in /.crosspoint/caldav.json";
+    return false;
+  }
+  if (store.username.empty()) {
+    store.configError = "Missing username in /.crosspoint/caldav.json";
+    return false;
+  }
+  if (store.password.empty()) {
+    store.configError = "Missing password in /.crosspoint/caldav.json";
+    return false;
+  }
+
+  store.configError.clear();
   LOG_DBG("CAL", "Loaded CalDAV credentials for: %s", store.calendarUrl.c_str());
   return true;
 }

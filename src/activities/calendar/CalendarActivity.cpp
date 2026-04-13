@@ -28,6 +28,20 @@ constexpr const char* MONTH_NAMES[] = {"",    "Jan", "Feb", "Mar", "Apr", "May",
 constexpr const char* DAY_HEADERS[] = {"Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"};
 }  // namespace
 
+std::string CalendarActivity::cacheMissingMessage() {
+  return "Missing /.crosspoint/calendar_cache.json";
+}
+
+std::string CalendarActivity::wifiRequiredMessage() {
+  return "WiFi required. No cache at /.crosspoint/calendar_cache.json";
+}
+
+std::string CalendarActivity::fetchFailedNoCacheMessage(const char* fetchError) {
+  std::string msg = fetchError ? fetchError : "Calendar fetch failed";
+  msg += ". No cache at /.crosspoint/calendar_cache.json";
+  return msg;
+}
+
 // ---- Date helpers ----
 
 void CalendarActivity::initTodayDate() {
@@ -104,7 +118,8 @@ void CalendarActivity::onEnter() {
 
   if (!CALDAV_STORE.hasCredentials()) {
     state = State::ERROR;
-    errorMessage = "No CalDAV URL configured";
+    errorMessage = CALDAV_STORE.getConfigError().empty() ? "Missing /.crosspoint/caldav.json"
+                                                         : CALDAV_STORE.getConfigError();
     requestUpdate();
     return;
   }
@@ -144,7 +159,7 @@ void CalendarActivity::onWifiComplete(bool connected) {
       state = State::MONTH_VIEW;
     } else {
       state = State::ERROR;
-      errorMessage = "WiFi connection failed";
+      errorMessage = wifiRequiredMessage();
     }
     requestUpdate();
   }
@@ -159,7 +174,7 @@ void CalendarActivity::fetchCalendar() {
       LOG_DBG("CAL", "Fetch failed (%s), using cache", CalDavClient::errorString(err));
     } else {
       state = State::ERROR;
-      errorMessage = CalDavClient::errorString(err);
+      errorMessage = fetchFailedNoCacheMessage(CalDavClient::errorString(err));
     }
     requestUpdate();
     return;
@@ -208,15 +223,22 @@ bool CalendarActivity::saveCacheToSd() const {
 }
 
 bool CalendarActivity::loadCacheFromSd() {
-  if (!Storage.exists(CACHE_FILE)) return false;
+  if (!Storage.exists(CACHE_FILE)) {
+    errorMessage = cacheMissingMessage();
+    return false;
+  }
 
   String json = Storage.readFile(CACHE_FILE);
-  if (json.isEmpty()) return false;
+  if (json.isEmpty()) {
+    errorMessage = "Empty /.crosspoint/calendar_cache.json";
+    return false;
+  }
 
   JsonDocument doc;
   auto error = deserializeJson(doc, json);
   if (error) {
     LOG_ERR("CAL", "Cache parse failed: %s", error.c_str());
+    errorMessage = "Invalid /.crosspoint/calendar_cache.json";
     return false;
   }
 
@@ -238,6 +260,10 @@ bool CalendarActivity::loadCacheFromSd() {
   }
 
   LOG_DBG("CAL", "Loaded %zu events from cache", events.size());
+  if (events.empty()) {
+    errorMessage = "No events in /.crosspoint/calendar_cache.json";
+    return false;
+  }
   return !events.empty();
 }
 
@@ -265,10 +291,16 @@ bool CalendarActivity::savePendingToSd() const {
 bool CalendarActivity::loadPendingFromSd() {
   if (!Storage.exists(PENDING_FILE)) return false;
   String json = Storage.readFile(PENDING_FILE);
-  if (json.isEmpty()) return false;
+  if (json.isEmpty()) {
+    LOG_ERR("CAL", "Empty /.crosspoint/calendar_pending.json");
+    return false;
+  }
 
   JsonDocument doc;
-  if (deserializeJson(doc, json)) return false;
+  if (deserializeJson(doc, json)) {
+    LOG_ERR("CAL", "Invalid /.crosspoint/calendar_pending.json");
+    return false;
+  }
 
   pendingEvents.clear();
   JsonArray arr = doc["pending"].as<JsonArray>();
@@ -308,6 +340,8 @@ void CalendarActivity::syncPendingEvents() {
   savePendingToSd();
   if (pendingEvents.empty()) {
     Storage.remove(PENDING_FILE);
+  } else {
+    LOG_ERR("CAL", "%zu pending events remain in /.crosspoint/calendar_pending.json", pendingEvents.size());
   }
 }
 

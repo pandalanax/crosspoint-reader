@@ -32,9 +32,20 @@ bool TandoorCredentialStore::saveToFile() const {
 }
 
 bool TandoorCredentialStore::loadFromFile() {
-  if (!Storage.exists(TANDOOR_SETTINGS_FILE)) return false;
+  serverUrl.clear();
+  apiToken.clear();
+
+  if (!Storage.exists(TANDOOR_SETTINGS_FILE)) {
+    configError = "Missing /.crosspoint/tandoor.json";
+    return false;
+  }
+
   String json = Storage.readFile(TANDOOR_SETTINGS_FILE);
-  if (json.isEmpty()) return false;
+  if (json.isEmpty()) {
+    configError = "Empty /.crosspoint/tandoor.json";
+    return false;
+  }
+
   return JsonSettingsIO::loadTandoor(*this, json.c_str());
 }
 
@@ -54,7 +65,8 @@ bool JsonSettingsIO::loadTandoor(TandoorCredentialStore& store, const char* json
   JsonDocument doc;
   auto error = deserializeJson(doc, json);
   if (error) {
-    LOG_ERR("TDR", "JSON parse error: %s", error.c_str());
+    store.configError = "Invalid /.crosspoint/tandoor.json";
+    LOG_ERR("TDR", "Invalid /.crosspoint/tandoor.json: %s", error.c_str());
     return false;
   }
 
@@ -66,6 +78,16 @@ bool JsonSettingsIO::loadTandoor(TandoorCredentialStore& store, const char* json
     store.apiToken = doc["apiToken"] | std::string("");
   }
 
+  if (store.serverUrl.empty()) {
+    store.configError = "Missing serverUrl in /.crosspoint/tandoor.json";
+    return false;
+  }
+  if (store.apiToken.empty()) {
+    store.configError = "Missing apiToken in /.crosspoint/tandoor.json";
+    return false;
+  }
+
+  store.configError.clear();
   LOG_DBG("TDR", "Loaded Tandoor credentials for: %s", store.serverUrl.c_str());
   return true;
 }

@@ -20,12 +20,27 @@ namespace {
 constexpr char CACHE_FILE[] = "/.crosspoint/shopping_list.json";
 }  // namespace
 
+std::string ShoppingListActivity::cacheMissingMessage() {
+  return "Missing /.crosspoint/shopping_list.json";
+}
+
+std::string ShoppingListActivity::wifiRequiredMessage() {
+  return "WiFi required. No cache at /.crosspoint/shopping_list.json";
+}
+
+std::string ShoppingListActivity::fetchFailedNoCacheMessage(const char* fetchError) {
+  std::string msg = fetchError ? fetchError : "Shopping list fetch failed";
+  msg += ". No cache at /.crosspoint/shopping_list.json";
+  return msg;
+}
+
 void ShoppingListActivity::onEnter() {
   Activity::onEnter();
 
   if (!TANDOOR_STORE.hasCredentials()) {
     state = State::ERROR;
-    errorMessage = "No Tandoor credentials configured";
+    errorMessage = TANDOOR_STORE.getConfigError().empty() ? "Missing /.crosspoint/tandoor.json"
+                                                          : TANDOOR_STORE.getConfigError();
     requestUpdate();
     return;
   }
@@ -73,7 +88,7 @@ void ShoppingListActivity::onWifiComplete(bool connected) {
       state = State::DISPLAYING;
     } else {
       state = State::ERROR;
-      errorMessage = "WiFi connection failed";
+      errorMessage = wifiRequiredMessage();
     }
     requestUpdate();
   }
@@ -89,7 +104,7 @@ void ShoppingListActivity::fetchList() {
       LOG_DBG("SHOP", "Fetch failed (%s), using cache", TandoorClient::errorString(err));
     } else {
       state = State::ERROR;
-      errorMessage = TandoorClient::errorString(err);
+      errorMessage = fetchFailedNoCacheMessage(TandoorClient::errorString(err));
     }
     requestUpdate();
     return;
@@ -183,15 +198,22 @@ bool ShoppingListActivity::saveCacheToSd() const {
 }
 
 bool ShoppingListActivity::loadCacheFromSd() {
-  if (!Storage.exists(CACHE_FILE)) return false;
+  if (!Storage.exists(CACHE_FILE)) {
+    errorMessage = cacheMissingMessage();
+    return false;
+  }
 
   String json = Storage.readFile(CACHE_FILE);
-  if (json.isEmpty()) return false;
+  if (json.isEmpty()) {
+    errorMessage = "Empty /.crosspoint/shopping_list.json";
+    return false;
+  }
 
   JsonDocument doc;
   auto error = deserializeJson(doc, json);
   if (error) {
     LOG_ERR("SHOP", "Cache parse failed: %s", error.c_str());
+    errorMessage = "Invalid /.crosspoint/shopping_list.json";
     return false;
   }
 
@@ -211,6 +233,10 @@ bool ShoppingListActivity::loadCacheFromSd() {
   }
 
   LOG_DBG("SHOP", "Loaded %zu items from cache", items.size());
+  if (items.empty()) {
+    errorMessage = "No items in /.crosspoint/shopping_list.json";
+    return false;
+  }
   return !items.empty();
 }
 

@@ -16,6 +16,7 @@ class TandoorCredentialStore {
   static TandoorCredentialStore instance;
   std::string serverUrl;  // e.g. "https://recipes.example.com"
   std::string apiToken;   // Tandoor API token
+  std::string configError;
 
   // Private constructor for singleton
   TandoorCredentialStore() = default;
@@ -40,6 +41,7 @@ class TandoorCredentialStore {
   const std::string& getApiToken() const { return apiToken; }
 
   bool hasCredentials() const;
+  const std::string& getConfigError() const { return configError; }
 
   // Get base API URL (e.g. "https://recipes.example.com/api")
   std::string getApiBaseUrl() const;

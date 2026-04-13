@@ -103,7 +103,8 @@ int getWithRetry(const std::string& url, String& responseBody) {
 
 TandoorClient::Error TandoorClient::fetchShoppingList(std::vector<ShoppingListItem>& outItems) {
   if (!TANDOOR_STORE.hasCredentials()) {
-    LOG_DBG("TDR", "No credentials configured");
+    LOG_DBG("TDR", "%s", TANDOOR_STORE.getConfigError().empty() ? "Missing /.crosspoint/tandoor.json"
+                                                                 : TANDOOR_STORE.getConfigError().c_str());
     return NO_CREDENTIALS;
   }
 
@@ -234,7 +235,8 @@ const char* TandoorClient::errorString(Error error) {
     case OK:
       return "Success";
     case NO_CREDENTIALS:
-      return "No credentials configured";
+      return TANDOOR_STORE.getConfigError().empty() ? "Missing /.crosspoint/tandoor.json"
+                                                    : TANDOOR_STORE.getConfigError().c_str();
     case NETWORK_ERROR:
       return "Network error";
     case AUTH_FAILED:

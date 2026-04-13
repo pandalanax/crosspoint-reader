@@ -59,6 +59,9 @@ class ShoppingListActivity final : public Activity {
   void toggleCurrentItem();
   bool saveCacheToSd() const;
   bool loadCacheFromSd();
+  static std::string cacheMissingMessage();
+  static std::string wifiRequiredMessage();
+  static std::string fetchFailedNoCacheMessage(const char* fetchError);
 
  public:
   explicit ShoppingListActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)

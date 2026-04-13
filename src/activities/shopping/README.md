@@ -4,10 +4,11 @@ Fetches your shopping list from a self-hosted [Tandoor Recipes](https://tandoor.
 
 ## Setup
 
-1. Open the device's web interface (connect via WiFi, go to `http://crosspoint.local`)
-2. In Settings, fill in:
-   - **Tandoor Server URL** -- your instance URL (e.g. `https://tandoor.example.com`)
-   - **Tandoor API Token** -- generate one in Tandoor under User > API Tokens
+1. Copy [`templates/tandoor.template.json`](../../../templates/tandoor.template.json) to `/.crosspoint/tandoor.json` on the SD card
+2. Edit the file with:
+   - **serverUrl** -- your instance URL (e.g. `https://tandoor.example.com`)
+   - **apiToken** -- generate one in Tandoor under `User -> API Tokens`
+3. Safely eject the SD card and start the Shopping List activity
 
 ## How It Works
 
@@ -31,6 +32,7 @@ Fetches your shopping list from a self-hosted [Tandoor Recipes](https://tandoor.
 
 | Path | Purpose |
 |------|---------|
+| `/.crosspoint/tandoor.json` | Tandoor server URL and API token |
 | `/.crosspoint/shopping_list.json` | Cached shopping list (auto-created) |
 
 ## Sleep Behavior

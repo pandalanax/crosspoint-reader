@@ -65,6 +65,9 @@ class CalendarActivity final : public Activity {
   bool savePendingToSd() const;
   bool loadPendingFromSd();
   void syncPendingEvents();
+  static std::string cacheMissingMessage();
+  static std::string wifiRequiredMessage();
+  static std::string fetchFailedNoCacheMessage(const char* fetchError);
 
   void initTodayDate();
   int daysInMonth(int year, int month) const;

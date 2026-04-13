@@ -22,13 +22,13 @@ constexpr int MAX_STRING_LEN = 256;
 
 bool ContactsActivity::loadFromSd() {
   if (!Storage.exists(CONTACTS_FILE)) {
-    errorMessage = "No contacts.json on SD card";
+    errorMessage = "Missing /.crosspoint/contacts.json";
     return false;
   }
 
   String json = Storage.readFile(CONTACTS_FILE);
   if (json.isEmpty()) {
-    errorMessage = "contacts.json is empty";
+    errorMessage = "Empty /.crosspoint/contacts.json";
     return false;
   }
 
@@ -36,13 +36,13 @@ bool ContactsActivity::loadFromSd() {
   auto error = deserializeJson(doc, json);
   if (error) {
     LOG_ERR("CONTACTS", "Parse failed: %s", error.c_str());
-    errorMessage = "contacts.json parse error";
+    errorMessage = "Invalid /.crosspoint/contacts.json";
     return false;
   }
 
   JsonArray arr = doc.as<JsonArray>();
   if (arr.isNull()) {
-    errorMessage = "contacts.json: expected JSON array";
+    errorMessage = "Expected JSON array in /.crosspoint/contacts.json";
     return false;
   }
 
@@ -89,6 +89,10 @@ bool ContactsActivity::loadFromSd() {
   }
 
   LOG_DBG("CONTACTS", "Loaded %zu contacts", contacts.size());
+  if (contacts.empty()) {
+    errorMessage = "No valid contacts in /.crosspoint/contacts.json";
+    return false;
+  }
   return !contacts.empty();
 }
 

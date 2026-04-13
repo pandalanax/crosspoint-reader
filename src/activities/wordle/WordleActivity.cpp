@@ -71,11 +71,26 @@ int WordleActivity::countJsonWords(const char* path) {
 }
 
 bool WordleActivity::loadWordList() {
-  if (!Storage.exists(WORDLES_PATH) || !Storage.exists(NONWORDLES_PATH)) {
+  if (!Storage.exists(WORDLES_PATH) && !Storage.exists(NONWORDLES_PATH)) {
+    wordListMessage = "Missing /wordle/wordles.json";
+    wordListMessage += " and /wordle/nonwordles.json";
+    return false;
+  }
+  if (!Storage.exists(WORDLES_PATH)) {
+    wordListMessage = "Missing /wordle/wordles.json";
+    return false;
+  }
+  if (!Storage.exists(NONWORDLES_PATH)) {
+    wordListMessage = "Missing /wordle/nonwordles.json";
     return false;
   }
   wordCount = countJsonWords(WORDLES_PATH);
+  if (wordCount <= 0) {
+    wordListMessage = "No valid 5-letter words in /wordle/wordles.json";
+    return false;
+  }
   LOG_DBG("WORDLE", "Wordle answer count: %d", wordCount);
+  wordListMessage.clear();
   return wordCount > 0;
 }
 
@@ -192,18 +207,22 @@ void WordleActivity::downloadWordLists() {
   auto r1 = HttpDownloader::downloadToFile(WORDLES_URL, WORDLES_PATH);
   if (r1 != HttpDownloader::OK) {
     LOG_ERR("WORDLE", "Failed to download wordles.json: %d", r1);
+    wordListMessage = "Download failed: /wordle/wordles.json";
     return;
   }
 
   auto r2 = HttpDownloader::downloadToFile(NONWORDLES_URL, NONWORDLES_PATH);
   if (r2 != HttpDownloader::OK) {
     LOG_ERR("WORDLE", "Failed to download nonwordles.json: %d", r2);
+    wordListMessage = "Download failed: /wordle/nonwordles.json";
     return;
   }
 
   LOG_DBG("WORDLE", "Word lists downloaded successfully");
   wordListReady = loadWordList();
-  if (wordListReady) loadRandomWord();
+  if (wordListReady) {
+    loadRandomWord();
+  }
 }
 
 // --- Game logic ---
@@ -711,13 +730,16 @@ void WordleActivity::render(RenderLock&&) {
 
     const int midY = renderer.getScreenHeight() / 2;
     const int lineH = renderer.getLineHeight(UI_12_FONT_ID);
-    if (WiFi.status() == WL_CONNECTED) {
-      renderer.drawCenteredText(UI_12_FONT_ID, midY - lineH, "Word lists not found.");
+  if (WiFi.status() == WL_CONNECTED) {
+      renderer.drawCenteredText(UI_12_FONT_ID, midY - lineH * 2, wordListMessage.empty() ? "Missing word lists."
+                                                                                          : wordListMessage.c_str());
       renderer.drawCenteredText(UI_12_FONT_ID, midY + 2, "Press OK to download.");
     } else {
-      renderer.drawCenteredText(UI_12_FONT_ID, midY - lineH * 2, "Word lists not found.");
-      renderer.drawCenteredText(UI_12_FONT_ID, midY + lineH, "place in /wordle/ manually:");
-      renderer.drawCenteredText(UI_12_FONT_ID, midY + lineH * 2 + 4, "wordles.json + nonwordles.json");
+      renderer.drawCenteredText(UI_12_FONT_ID, midY - lineH * 3, wordListMessage.empty() ? "Missing word lists."
+                                                                                          : wordListMessage.c_str());
+      renderer.drawCenteredText(UI_12_FONT_ID, midY, "Copy files to /wordle/:");
+      renderer.drawCenteredText(UI_12_FONT_ID, midY + lineH + 4, "wordles.json");
+      renderer.drawCenteredText(UI_12_FONT_ID, midY + lineH * 2 + 8, "nonwordles.json");
     }
 
     const auto labels = mappedInput.mapLabels("Back", "OK", "", "");

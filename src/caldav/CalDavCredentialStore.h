@@ -17,6 +17,7 @@ class CalDavCredentialStore {
   std::string calendarUrl;  // Full .ics URL, e.g. "https://cal.example.com/user/calendar-id/"
   std::string username;
   std::string password;
+  std::string configError;
 
   CalDavCredentialStore() = default;
 
@@ -42,6 +43,7 @@ class CalDavCredentialStore {
   const std::string& getPassword() const { return password; }
 
   bool hasCredentials() const;
+  const std::string& getConfigError() const { return configError; }
 };
 
 #define CALDAV_STORE CalDavCredentialStore::getInstance()

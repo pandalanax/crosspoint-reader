@@ -61,6 +61,7 @@ class WordleActivity final : public Activity {
   // Word list management
   bool wordListReady = false;
   bool downloadPromptShown = false;
+  std::string wordListMessage;
   bool loadWordList();
   int countJsonWords(const char* path);
   bool loadRandomWord();
