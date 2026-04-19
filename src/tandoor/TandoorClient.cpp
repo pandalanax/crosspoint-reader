@@ -103,8 +103,9 @@ int getWithRetry(const std::string& url, String& responseBody) {
 
 TandoorClient::Error TandoorClient::fetchShoppingList(std::vector<ShoppingListItem>& outItems) {
   if (!TANDOOR_STORE.hasCredentials()) {
-    LOG_DBG("TDR", "%s", TANDOOR_STORE.getConfigError().empty() ? "Missing /.crosspoint/tandoor.json"
-                                                                 : TANDOOR_STORE.getConfigError().c_str());
+    LOG_DBG("TDR", "%s",
+            TANDOOR_STORE.getConfigError().empty() ? "Missing /.crosspoint/tandoor.json"
+                                                   : TANDOOR_STORE.getConfigError().c_str());
     return NO_CREDENTIALS;
   }
 

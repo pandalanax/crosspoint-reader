@@ -20,9 +20,7 @@ namespace {
 constexpr char CACHE_FILE[] = "/.crosspoint/shopping_list.json";
 }  // namespace
 
-std::string ShoppingListActivity::cacheMissingMessage() {
-  return "Missing /.crosspoint/shopping_list.json";
-}
+std::string ShoppingListActivity::cacheMissingMessage() { return "Missing /.crosspoint/shopping_list.json"; }
 
 std::string ShoppingListActivity::wifiRequiredMessage() {
   return "WiFi required. No cache at /.crosspoint/shopping_list.json";
@@ -43,8 +41,8 @@ void ShoppingListActivity::onEnter() {
 
   if (!TANDOOR_STORE.hasCredentials()) {
     state = State::ERROR;
-    errorMessage = TANDOOR_STORE.getConfigError().empty() ? "Missing /.crosspoint/tandoor.json"
-                                                          : TANDOOR_STORE.getConfigError();
+    errorMessage =
+        TANDOOR_STORE.getConfigError().empty() ? "Missing /.crosspoint/tandoor.json" : TANDOOR_STORE.getConfigError();
     requestUpdate();
     return;
   }
