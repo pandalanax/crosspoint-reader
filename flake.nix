@@ -52,7 +52,7 @@
         # ── nix develop ──────────────────────────────────────────────
         devShells.default = pkgs.mkShell {
           packages = buildInputs ++ [
-            pkgs.clang-tools # clang-format, clang-tidy
+            pkgs.llvmPackages_21.clang-tools # clang-format-21, clang-tidy
             pkgs.minicom # serial monitor
             pkgs.usbutils # lsusb
           ];
