@@ -723,20 +723,20 @@ void CalendarActivity::renderTimePicker() {
   snprintf(hourStr, sizeof(hourStr), "%02d", pickerHour);
   snprintf(minStr, sizeof(minStr), "%02d", pickerMinute);
 
-  int hourW = renderer.getTextWidth(BOOKERLY_18_FONT_ID, hourStr);
-  int minW = renderer.getTextWidth(BOOKERLY_18_FONT_ID, minStr);
-  int colonW = renderer.getTextWidth(BOOKERLY_18_FONT_ID, ":");
+  int hourW = renderer.getTextWidth(NOTOSERIF_18_FONT_ID, hourStr);
+  int minW = renderer.getTextWidth(NOTOSERIF_18_FONT_ID, minStr);
+  int colonW = renderer.getTextWidth(NOTOSERIF_18_FONT_ID, ":");
   int totalW = hourW + colonW + minW + 24;  // 24px spacing
 
   int hourX = centerX - totalW / 2;
   int colonX = hourX + hourW + 8;
   int minX = colonX + colonW + 16;
-  int textH = renderer.getLineHeight(BOOKERLY_18_FONT_ID);
+  int textH = renderer.getLineHeight(NOTOSERIF_18_FONT_ID);
   int textY = centerY - textH / 2;
 
-  renderer.drawText(BOOKERLY_18_FONT_ID, hourX, textY, hourStr);
-  renderer.drawText(BOOKERLY_18_FONT_ID, colonX, textY, ":");
-  renderer.drawText(BOOKERLY_18_FONT_ID, minX, textY, minStr);
+  renderer.drawText(NOTOSERIF_18_FONT_ID, hourX, textY, hourStr);
+  renderer.drawText(NOTOSERIF_18_FONT_ID, colonX, textY, ":");
+  renderer.drawText(NOTOSERIF_18_FONT_ID, minX, textY, minStr);
 
   // Underline the selected field
   int underY = textY + textH + 4;

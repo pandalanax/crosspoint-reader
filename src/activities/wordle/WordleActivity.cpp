@@ -520,14 +520,14 @@ void WordleActivity::drawGrid() {
       // Draw letter
       if (hasLetter) {
         const char text[2] = {letter, '\0'};
-        int textWidth = renderer.getTextWidth(BOOKERLY_16_FONT_ID, text);
+        int textWidth = renderer.getTextWidth(NOTOSERIF_16_FONT_ID, text);
         int textX = x + (tileSize - textWidth) / 2;
-        int textHeight = renderer.getLineHeight(BOOKERLY_16_FONT_ID);
+        int textHeight = renderer.getLineHeight(NOTOSERIF_16_FONT_ID);
         bool revealed =
             (state == TileState::Correct || state == TileState::WrongPosition || state == TileState::Absent);
         // Shift text up slightly on revealed tiles to leave room for indicator
         int textY = y + (tileSize - textHeight) / 2 - (revealed ? 4 : 0);
-        renderer.drawText(BOOKERLY_16_FONT_ID, textX, textY, text, !revealed);
+        renderer.drawText(NOTOSERIF_16_FONT_ID, textX, textY, text, !revealed);
       }
 
       // B&W state indicators drawn in white on the black tile background:
@@ -644,7 +644,7 @@ void WordleActivity::drawOverlay() {
     }
     const char* hint = "Press any key for new game";
 
-    const int titleH = renderer.getLineHeight(BOOKERLY_16_FONT_ID);
+    const int titleH = renderer.getLineHeight(NOTOSERIF_16_FONT_ID);
     const int hintH = renderer.getLineHeight(UI_12_FONT_ID);
     constexpr int pad = 18;
     constexpr int gap = 12;
@@ -656,8 +656,8 @@ void WordleActivity::drawOverlay() {
     renderer.fillRect(panelX, panelY, panelW, panelH, false);
     renderer.drawRect(panelX, panelY, panelW, panelH, 2, true);
 
-    int msgW = renderer.getTextWidth(BOOKERLY_16_FONT_ID, msg);
-    renderer.drawText(BOOKERLY_16_FONT_ID, panelX + (panelW - msgW) / 2, panelY + pad, msg, true);
+    int msgW = renderer.getTextWidth(NOTOSERIF_16_FONT_ID, msg);
+    renderer.drawText(NOTOSERIF_16_FONT_ID, panelX + (panelW - msgW) / 2, panelY + pad, msg, true);
 
     int hintW = renderer.getTextWidth(UI_12_FONT_ID, hint);
     renderer.drawText(UI_12_FONT_ID, panelX + (panelW - hintW) / 2, panelY + pad + titleH + gap, hint, true);
@@ -683,8 +683,8 @@ void WordleActivity::drawLegend() {
 
   // Title
   const char* title = "Wordle Guide";
-  int titleW = renderer.getTextWidth(BOOKERLY_16_FONT_ID, title);
-  renderer.drawText(BOOKERLY_16_FONT_ID, panelX + (panelW - titleW) / 2, panelY - 2, title, true);
+  int titleW = renderer.getTextWidth(NOTOSERIF_16_FONT_ID, title);
+  renderer.drawText(NOTOSERIF_16_FONT_ID, panelX + (panelW - titleW) / 2, panelY - 2, title, true);
   renderer.fillRect(panelX + 10, panelY + 38, panelW - 20, 1, true);  // separator
 
   // Four example rows: tile + description
