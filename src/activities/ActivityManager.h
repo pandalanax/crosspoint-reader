@@ -90,7 +90,6 @@ class ActivityManager {
   void goToShoppingList();
   void goToCalendar();
   void goToContacts();
-  void goToWordle();
   void goHome();
 
   // This will move current activity to stack instead of deleting it

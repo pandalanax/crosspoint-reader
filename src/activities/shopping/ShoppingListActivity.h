@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -37,8 +38,9 @@ class ShoppingListActivity final : public Activity {
   size_t selectorIndex = 0;
   std::vector<ShoppingListItem> items;
   std::string errorMessage;
-  unsigned long successPopupUntilMs = 0;
-  static constexpr unsigned long SUCCESS_POPUP_DURATION_MS = 1500;
+  unsigned long popupUntilMs = 0;
+  std::string popupText;
+  static constexpr unsigned long POPUP_DURATION_MS = 2000;
 
   // When true, the user is actively browsing the list (prevent auto-sleep).
   // Set to false after a refresh completes so the device can sleep.
@@ -49,8 +51,10 @@ class ShoppingListActivity final : public Activity {
   struct DisplayRow {
     enum Type { CATEGORY_HEADER, ITEM };
     Type type;
-    size_t itemIndex;        // Index into items vector (for ITEM type)
+    std::vector<size_t> itemIndices;  // Indices into items vector (for ITEM type)
     std::string headerText;  // Category name (for CATEGORY_HEADER type)
+    std::string lineText;    // Precomputed display text (for ITEM type)
+    bool checked = false;
   };
   std::vector<DisplayRow> displayRows;
 
@@ -59,10 +63,11 @@ class ShoppingListActivity final : public Activity {
   void fetchList();
   void triggerRefresh();
   void toggleCurrentItem();
+  std::string buildGroupedLineText(const std::vector<size_t>& itemIndices) const;
   bool saveCacheToSd() const;
   bool loadCacheFromSd();
   void mergeFetchedItems(std::vector<ShoppingListItem>&& fetchedItems, const std::vector<ShoppingListItem>& localItems,
-                         const std::vector<int>& pendingIds);
+                         const std::vector<int>& pendingIds, const std::vector<int>& syncedIds);
   static bool containsId(const std::vector<int>& ids, int id);
   static std::string cacheMissingMessage();
   static std::string wifiRequiredMessage();

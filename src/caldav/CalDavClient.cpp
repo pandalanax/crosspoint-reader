@@ -5,10 +5,12 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <esp_random.h>
+#include <esp_sntp.h>
 
 #include <algorithm>
 #include <cstring>
 #include <ctime>
+#include <vector>
 
 #include "CalDavCredentialStore.h"
 
@@ -97,8 +99,50 @@ void beginAuthRequest(HTTPClient& http, std::unique_ptr<WiFiClientSecure>& secur
 
 bool isWifiConnected() { return WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0); }
 
+void ensureNtpTime() {
+  time_t now = time(nullptr);
+  if (now > 1700000000) return;  // Already have a reasonable time (post-2023)
+
+  LOG_DBG("CAL", "RTC not set, syncing NTP...");
+  if (esp_sntp_enabled()) esp_sntp_stop();
+  esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+  esp_sntp_setservername(0, "pool.ntp.org");
+  esp_sntp_init();
+
+  for (int retry = 0; retry < 50; retry++) {  // 5s max
+    vTaskDelay(pdMS_TO_TICKS(100));
+    if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
+      LOG_DBG("CAL", "NTP synced");
+      return;
+    }
+  }
+  LOG_ERR("CAL", "NTP sync timeout");
+}
+
 bool isTransientError(int httpCode) {
   return httpCode < 0 || httpCode == 500 || httpCode == 502 || httpCode == 503 || httpCode == 504;
+}
+
+std::string normalizeCalendarCollectionUrl(const std::string& rawUrl) {
+  if (rawUrl.empty()) return rawUrl;
+  if (rawUrl.back() == '/') return rawUrl;
+  return rawUrl + "/";
+}
+
+std::string extractBaseOrigin(const std::string& url) {
+  const size_t schemeEnd = url.find("://");
+  if (schemeEnd == std::string::npos) return "";
+  const size_t hostStart = schemeEnd + 3;
+  const size_t pathStart = url.find('/', hostStart);
+  if (pathStart == std::string::npos) return url;
+  return url.substr(0, pathStart);
+}
+
+std::string absoluteUrlForHref(const std::string& collectionUrl, const std::string& href) {
+  if (href.rfind("http://", 0) == 0 || href.rfind("https://", 0) == 0) return href;
+  const std::string baseOrigin = extractBaseOrigin(collectionUrl);
+  if (!href.empty() && href.front() == '/') return baseOrigin + href;
+  return normalizeCalendarCollectionUrl(collectionUrl) + href;
 }
 
 // Unfold iCal line continuations: lines starting with a space or tab are continuations
@@ -224,7 +268,9 @@ bool parsePropertyValue(const char* val, ICalDateTime& out) {
   const char* colon = strchr(val, ':');
   if (colon) val = colon + 1;
 
-  int len = strlen(val);
+  // Find length up to next newline or null terminator (val may point into a larger buffer)
+  int len = 0;
+  while (val[len] != '\0' && val[len] != '\n' && val[len] != '\r') len++;
   if (len < 8) return false;
 
   char buf[5];
@@ -543,10 +589,16 @@ std::string buildCalendarQueryXml(int startDays, int endDaysExclusive) {
   return request;
 }
 
-void parseCalendarDataFragment(const String& calendarData, std::vector<ParsedEvent>& parsedEvents) {
-  if (calendarData.isEmpty()) return;
+void parseCalendarDataFragment(const char* rawData, int rawLen, std::vector<ParsedEvent>& parsedEvents) {
+  if (!rawData || rawLen <= 0) return;
 
-  String unfolded = calendarData;
+  // Copy into a mutable String for in-place unfolding
+  String unfolded;
+  if (!unfolded.reserve(rawLen)) {
+    LOG_ERR("CAL", "Failed to allocate %d bytes for iCal fragment", rawLen);
+    return;
+  }
+  unfolded.concat(rawData, rawLen);
   unfoldICalLines(unfolded);
 
   ParsedEvent current = {};
@@ -606,37 +658,262 @@ void parseCalendarDataFragment(const String& calendarData, std::vector<ParsedEve
   }
 }
 
+// Check if the tag name (between < and >) ends with the given suffix.
+// Works with raw C pointers to avoid Arduino String heap allocations.
+bool tagEndsWith(const char* tagStart, int tagLen, const char* suffix, int suffixLen) {
+  if (tagLen < suffixLen) return false;
+  return memcmp(tagStart + tagLen - suffixLen, suffix, suffixLen) == 0;
+}
+
 bool parseCalendarQueryResponse(const String& responseBody, std::vector<ParsedEvent>& parsedEvents) {
-  int searchFrom = 0;
-  while (true) {
-    int openTagStart = responseBody.indexOf("<", searchFrom);
-    if (openTagStart < 0) break;
-    int openTagEnd = responseBody.indexOf('>', openTagStart);
-    if (openTagEnd < 0) break;
+  const char* data = responseBody.c_str();
+  const int dataLen = responseBody.length();
+  if (dataLen == 0) {
+    LOG_ERR("CAL", "Empty response body");
+    return false;
+  }
+  LOG_DBG("CAL", "Parsing %d byte response", dataLen);
 
-    const String openTag = responseBody.substring(openTagStart + 1, openTagEnd);
-    if (!openTag.endsWith("calendar-data") &&
-        !openTag.endsWith("calendar-data xmlns=\"urn:ietf:params:xml:ns:caldav\"")) {
-      searchFrom = openTagEnd + 1;
+  static constexpr char CALENDAR_DATA[] = "calendar-data";
+  static constexpr int CD_LEN = 13;  // strlen("calendar-data")
+
+  int pos = 0;
+  while (pos < dataLen) {
+    // Find next '<'
+    const char* openAngle = static_cast<const char*>(memchr(data + pos, '<', dataLen - pos));
+    if (!openAngle) break;
+    int openTagStart = static_cast<int>(openAngle - data);
+
+    // Find matching '>'
+    const char* closeAngle = static_cast<const char*>(memchr(data + openTagStart, '>', dataLen - openTagStart));
+    if (!closeAngle) break;
+    int openTagEnd = static_cast<int>(closeAngle - data);
+
+    // Tag content is between '<' and '>'
+    const char* tagContent = data + openTagStart + 1;
+    int tagLen = openTagEnd - openTagStart - 1;
+
+    // Check if this tag ends with "calendar-data" (handles any namespace prefix)
+    if (!tagEndsWith(tagContent, tagLen, CALENDAR_DATA, CD_LEN)) {
+      pos = openTagEnd + 1;
       continue;
     }
 
-    int closeTagStart = responseBody.indexOf("</", openTagEnd + 1);
-    if (closeTagStart < 0) break;
-    int closeTagEnd = responseBody.indexOf('>', closeTagStart);
-    if (closeTagEnd < 0) break;
-
-    const String closeTag = responseBody.substring(closeTagStart + 2, closeTagEnd);
-    if (!closeTag.endsWith("calendar-data")) {
-      searchFrom = openTagEnd + 1;
+    // Skip closing tags (start with '/')
+    if (tagLen > 0 && tagContent[0] == '/') {
+      pos = openTagEnd + 1;
       continue;
     }
 
-    parseCalendarDataFragment(responseBody.substring(openTagEnd + 1, closeTagStart), parsedEvents);
-    searchFrom = closeTagEnd + 1;
+    // Found an opening calendar-data tag. Find the matching close tag.
+    const char* contentStart = data + openTagEnd + 1;
+    int remaining = dataLen - (openTagEnd + 1);
+
+    // Search for "</...calendar-data>"
+    const char* searchPtr = contentStart;
+    int searchLen = remaining;
+    int closeTagStartPos = -1;
+    int closeTagEndPos = -1;
+
+    while (searchLen > 0) {
+      const char* lt = static_cast<const char*>(memchr(searchPtr, '<', searchLen));
+      if (!lt) break;
+      int ltPos = static_cast<int>(lt - data);
+
+      // Check if it's a closing tag starting with "</"
+      if (ltPos + 1 < dataLen && data[ltPos + 1] == '/') {
+        const char* gt = static_cast<const char*>(memchr(lt, '>', dataLen - ltPos));
+        if (!gt) break;
+        int gtPos = static_cast<int>(gt - data);
+
+        // Check if this closing tag ends with "calendar-data"
+        const char* closeTagContent = data + ltPos + 2;  // skip "</"
+        int closeTagLen = gtPos - ltPos - 2;
+        if (tagEndsWith(closeTagContent, closeTagLen, CALENDAR_DATA, CD_LEN)) {
+          closeTagStartPos = ltPos;
+          closeTagEndPos = gtPos;
+          break;
+        }
+
+        searchPtr = gt + 1;
+        searchLen = dataLen - (gtPos + 1);
+      } else {
+        searchPtr = lt + 1;
+        searchLen = dataLen - (ltPos + 1);
+      }
+    }
+
+    if (closeTagStartPos < 0) break;
+
+    // Pass raw pointer range directly — no intermediate String allocation needed.
+    int fragmentLen = closeTagStartPos - (openTagEnd + 1);
+    parseCalendarDataFragment(contentStart, fragmentLen, parsedEvents);
+
+    pos = closeTagEndPos + 1;
   }
 
+  LOG_DBG("CAL", "Found %zu events in response", parsedEvents.size());
   return !parsedEvents.empty();
+}
+
+void collectResponseHrefs(const String& responseBody, std::vector<std::string>& hrefs) {
+  const char* data = responseBody.c_str();
+  const int dataLen = responseBody.length();
+  const char* pos = data;
+
+  while (pos < data + dataLen) {
+    const char* openTag = strstr(pos, "<href>");
+    if (!openTag) break;
+    const char* contentStart = openTag + 6;
+    const char* closeTag = strstr(contentStart, "</href>");
+    if (!closeTag) break;
+
+    // Trim whitespace from href content
+    while (contentStart < closeTag && (*contentStart == ' ' || *contentStart == '\t' || *contentStart == '\n' ||
+                                       *contentStart == '\r'))
+      contentStart++;
+    const char* contentEnd = closeTag;
+    while (contentEnd > contentStart && (contentEnd[-1] == ' ' || contentEnd[-1] == '\t' || contentEnd[-1] == '\n' ||
+                                         contentEnd[-1] == '\r'))
+      contentEnd--;
+
+    if (contentEnd > contentStart) {
+      hrefs.emplace_back(contentStart, contentEnd - contentStart);
+    }
+    pos = closeTag + 7;
+  }
+}
+
+int getCalendarObject(const std::string& url, String& responseBody) {
+  int lastCode = -1;
+
+  for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      if (!isWifiConnected()) return -1;
+      vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
+    }
+
+    HTTPClient http;
+    std::unique_ptr<WiFiClientSecure> secureClient;
+    WiFiClient plainClient;
+    beginAuthRequest(http, secureClient, plainClient, url);
+
+    lastCode = http.GET();
+    if (lastCode == 200) {
+      const int len = http.getSize();
+      if (len > MAX_RESPONSE_SIZE) {
+        http.end();
+        return -1;
+      }
+      responseBody = http.getString();
+      http.end();
+      return 200;
+    }
+
+    http.end();
+    if (!isTransientError(lastCode)) return lastCode;
+  }
+
+  return lastCode;
+}
+
+bool fetchEventsViaHrefFallback(const std::string& collectionUrl, const String& responseBody, int startDays, int endDays,
+                                std::vector<CalendarEvent>& outEvents) {
+  std::vector<std::string> hrefs;
+  collectResponseHrefs(responseBody, hrefs);
+  if (hrefs.empty()) return false;
+
+  std::vector<ParsedEvent> parsedEvents;
+  parsedEvents.reserve(hrefs.size());
+
+  for (const auto& href : hrefs) {
+    String icalBody;
+    if (getCalendarObject(absoluteUrlForHref(collectionUrl, href), icalBody) != 200) continue;
+    parseCalendarDataFragment(icalBody.c_str(), icalBody.length(), parsedEvents);
+  }
+
+  for (const auto& parsed : parsedEvents) {
+    if (static_cast<int>(outEvents.size()) >= MAX_EVENTS) break;
+    if (intersectsWindow(parsed.event, startDays, endDays)) {
+      outEvents.push_back(parsed.event);
+    }
+  }
+
+  std::sort(outEvents.begin(), outEvents.end());
+  return !outEvents.empty();
+}
+
+int propfindCollectionMembers(const std::string& url, String& responseBody) {
+  static constexpr char propfindXml[] =
+      "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+      "<d:propfind xmlns:d=\"DAV:\">"
+      "<d:prop><d:getetag/></d:prop>"
+      "</d:propfind>";
+
+  int lastCode = -1;
+  for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      if (!isWifiConnected()) return -1;
+      vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
+    }
+
+    HTTPClient http;
+    std::unique_ptr<WiFiClientSecure> secureClient;
+    WiFiClient plainClient;
+    beginAuthRequest(http, secureClient, plainClient, url);
+    http.addHeader("Content-Type", "application/xml; charset=utf-8");
+    http.addHeader("Depth", "1");
+
+    lastCode = http.sendRequest("PROPFIND", reinterpret_cast<uint8_t*>(const_cast<char*>(propfindXml)),
+                                strlen(propfindXml));
+    if (lastCode == 207) {
+      const int len = http.getSize();
+      if (len > MAX_RESPONSE_SIZE) {
+        http.end();
+        return -1;
+      }
+      responseBody = http.getString();
+      http.end();
+      return 207;
+    }
+
+    http.end();
+    if (!isTransientError(lastCode)) return lastCode;
+  }
+
+  return lastCode;
+}
+
+bool fetchEventsViaPropfindFallback(const std::string& collectionUrl, int startDays, int endDays,
+                                    std::vector<CalendarEvent>& outEvents) {
+  String propfindBody;
+  if (propfindCollectionMembers(collectionUrl, propfindBody) != 207) return false;
+
+  std::vector<std::string> hrefs;
+  collectResponseHrefs(propfindBody, hrefs);
+  if (hrefs.empty()) return false;
+
+  std::vector<ParsedEvent> parsedEvents;
+  parsedEvents.reserve(hrefs.size());
+
+  for (const auto& href : hrefs) {
+    if (href.empty() || href.back() == '/') continue;
+    if (href.find(".ics") == std::string::npos) continue;
+
+    String icalBody;
+    if (getCalendarObject(absoluteUrlForHref(collectionUrl, href), icalBody) != 200) continue;
+    parseCalendarDataFragment(icalBody.c_str(), icalBody.length(), parsedEvents);
+  }
+
+  for (const auto& parsed : parsedEvents) {
+    if (static_cast<int>(outEvents.size()) >= MAX_EVENTS) break;
+    if (intersectsWindow(parsed.event, startDays, endDays)) {
+      outEvents.push_back(parsed.event);
+    }
+  }
+
+  std::sort(outEvents.begin(), outEvents.end());
+  return !outEvents.empty();
 }
 
 }  // namespace
@@ -663,12 +940,14 @@ CalDavClient::Error CalDavClient::fetchEvents(std::vector<CalendarEvent>& outEve
     return NETWORK_ERROR;
   }
 
-  const std::string& url = CALDAV_STORE.getCalendarUrl();
+  const std::string url = normalizeCalendarCollectionUrl(CALDAV_STORE.getCalendarUrl());
   LOG_DBG("CAL", "Fetching calendar: %s", url.c_str());
 
   int lastCode = -1;
 
-  // Get current date from ESP32 RTC (set by SNTP or manual)
+  // Ensure RTC has a valid time before computing the query window
+  ensureNtpTime();
+
   struct tm now;
   time_t nowEpoch = time(nullptr);
   localtime_r(&nowEpoch, &now);
@@ -712,9 +991,23 @@ CalDavClient::Error CalDavClient::fetchEvents(std::vector<CalendarEvent>& outEve
         return SERVER_ERROR;
       }
       String responseBody = http.getString();
+      LOG_DBG("CAL", "Got %d bytes (Content-Length: %d)", responseBody.length(), len);
+      if (responseBody.length() == 0) {
+        LOG_ERR("CAL", "Failed to read response body (allocation failure?)");
+        http.end();
+        return PARSE_ERROR;
+      }
       if (!parseCalendarQueryResponse(responseBody, parsedEvents)) {
         http.end();
-        LOG_ERR("CAL", "No VEVENT data in calendar-query response");
+        LOG_ERR("CAL", "No VEVENT data in calendar-query response; trying href fallbacks");
+        if (fetchEventsViaHrefFallback(url, responseBody, startDays, endDays, outEvents)) {
+          LOG_DBG("CAL", "Parsed %zu events via REPORT href fallback", outEvents.size());
+          return OK;
+        }
+        if (fetchEventsViaPropfindFallback(url, startDays, endDays, outEvents)) {
+          LOG_DBG("CAL", "Parsed %zu events via PROPFIND fallback", outEvents.size());
+          return OK;
+        }
         return PARSE_ERROR;
       }
 
@@ -813,8 +1106,7 @@ CalDavClient::Error CalDavClient::putEvent(int year, int month, int day, int hou
   }
 
   // PUT to calendarUrl + uid.ics
-  std::string putUrl = CALDAV_STORE.getCalendarUrl();
-  if (!putUrl.empty() && putUrl.back() != '/') putUrl += '/';
+  std::string putUrl = normalizeCalendarCollectionUrl(CALDAV_STORE.getCalendarUrl());
   putUrl += uid;
   putUrl += ".ics";
 

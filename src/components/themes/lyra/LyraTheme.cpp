@@ -25,6 +25,9 @@
 #include "components/icons/settings2.h"
 #include "components/icons/text24.h"
 #include "components/icons/transfer.h"
+#include "components/icons/calendar.h"
+#include "components/icons/contacts.h"
+#include "components/icons/shopping.h"
 #include "components/icons/wifi.h"
 #include "fontIds.h"
 
@@ -99,6 +102,12 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return WifiIcon;
       case UIIcon::Hotspot:
         return HotspotIcon;
+      case UIIcon::Shopping:
+        return ShoppingIcon;
+      case UIIcon::Calendar:
+        return CalendarIcon;
+      case UIIcon::Contacts:
+        return ContactsIcon;
       default:
         return nullptr;
     }

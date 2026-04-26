@@ -40,9 +40,9 @@ class CalendarActivity final : public Activity {
   static constexpr unsigned long SUCCESS_POPUP_DURATION_MS = 1500;
   bool userActive = false;
 
-  // Month grid state — all set by initTodayDate() in onEnter()
-  int viewYear = 0;
-  int viewMonth = 1;
+  // Month grid state — set by initTodayDate() or restored from cache
+  int viewYear = 2026;
+  int viewMonth = 4;
   int cursorDay = 1;
   int todayYear = 0, todayMonth = 0, todayDay = 0;
 

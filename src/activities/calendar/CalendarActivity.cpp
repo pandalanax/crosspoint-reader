@@ -121,9 +121,11 @@ void CalendarActivity::changeMonth(int delta) {
 void CalendarActivity::onEnter() {
   Activity::onEnter();
   initTodayDate();
-  viewYear = todayYear;
-  viewMonth = todayMonth;
-  cursorDay = todayDay;
+  if (todayYear >= 2020) {
+    viewYear = todayYear;
+    viewMonth = todayMonth;
+    cursorDay = todayDay;
+  }
 
   loadPendingFromSd();
 
@@ -179,7 +181,7 @@ void CalendarActivity::onWifiComplete(bool connected) {
 
 void CalendarActivity::fetchCalendar() {
   syncPendingEvents();
-  CalDavClient::Error err = CalDavClient::fetchEvents(events, 30, 120);
+  CalDavClient::Error err = CalDavClient::fetchEvents(events, 15, 60);
   if (err != CalDavClient::OK) {
     if (loadCacheFromSd()) {
       state = State::MONTH_VIEW;
@@ -188,8 +190,21 @@ void CalendarActivity::fetchCalendar() {
       state = State::ERROR;
       errorMessage = fetchFailedNoCacheMessage(CalDavClient::errorString(err));
     }
+    initTodayDate();
+    if (todayYear >= 2020) {
+      viewYear = todayYear;
+      viewMonth = todayMonth;
+      cursorDay = todayDay;
+    }
     requestUpdate();
     return;
+  }
+
+  initTodayDate();
+  if (todayYear >= 2020) {
+    viewYear = todayYear;
+    viewMonth = todayMonth;
+    cursorDay = todayDay;
   }
 
   saveCacheToSd();
@@ -215,6 +230,10 @@ bool CalendarActivity::saveCacheToSd() const {
   Storage.mkdir("/.crosspoint");
 
   JsonDocument doc;
+  doc["vy"] = viewYear;
+  doc["vm"] = viewMonth;
+  doc["vd"] = cursorDay;
+
   JsonArray arr = doc["events"].to<JsonArray>();
   for (const auto& ev : events) {
     JsonObject obj = arr.add<JsonObject>();
@@ -280,6 +299,16 @@ bool CalendarActivity::loadCacheFromSd() {
     ev.endMinute = obj["en"] | ev.startMinute;
     ev.allDay = obj["a"] | false;
     events.push_back(std::move(ev));
+  }
+
+  int cachedYear = doc["vy"] | 0;
+  int cachedMonth = doc["vm"] | 0;
+  int cachedDay = doc["vd"] | 0;
+  if (cachedYear >= 2020 && cachedMonth >= 1 && cachedMonth <= 12 && cachedDay >= 1) {
+    viewYear = cachedYear;
+    viewMonth = cachedMonth;
+    cursorDay = cachedDay;
+    clampCursor();
   }
 
   LOG_DBG("CAL", "Loaded %zu events from cache", events.size());
@@ -403,6 +432,25 @@ void CalendarActivity::loop() {
       ev.startDay = pe.day;
       ev.startHour = pe.hour;
       ev.startMinute = pe.minute;
+      ev.endYear = pe.year;
+      ev.endMonth = pe.month;
+      ev.endDay = pe.day;
+      ev.endHour = pe.hour + 1;
+      ev.endMinute = pe.minute;
+      // Handle midnight wrap (same logic as CalDavClient::putEvent)
+      if (ev.endHour >= 24) {
+        ev.endHour = 0;
+        ev.endDay++;
+        int maxDay = daysInMonth(ev.endYear, ev.endMonth);
+        if (ev.endDay > maxDay) {
+          ev.endDay = 1;
+          ev.endMonth++;
+          if (ev.endMonth > 12) {
+            ev.endMonth = 1;
+            ev.endYear++;
+          }
+        }
+      }
       ev.allDay = false;
       events.push_back(std::move(ev));
       std::sort(events.begin(), events.end());
@@ -545,28 +593,8 @@ void CalendarActivity::loop() {
     requestUpdate();
   });
 
-  buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Down}, [this, maxDay] {
-    if (cursorDay + 7 <= maxDay) {
-      cursorDay += 7;
-    } else if (cursorDay + 7 > maxDay) {
-      changeMonth(1);
-      cursorDay = std::min(cursorDay + 7 - maxDay, daysInMonth(viewYear, viewMonth));
-    }
-    userActive = true;
-    requestUpdate();
-  });
-
-  buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Up}, [this] {
-    if (cursorDay - 7 >= 1) {
-      cursorDay -= 7;
-    } else {
-      int prevMonthDays = daysInMonth(viewMonth == 1 ? viewYear - 1 : viewYear, viewMonth == 1 ? 12 : viewMonth - 1);
-      changeMonth(-1);
-      cursorDay = std::min(prevMonthDays + (cursorDay - 7), daysInMonth(viewYear, viewMonth));
-    }
-    userActive = true;
-    requestUpdate();
-  });
+  // Side buttons (Up/Down) are handled above via PageForward/PageBack for month navigation.
+  // No week-based Up/Down navigation — front Left/Right handle day-by-day movement.
 }
 
 // ---- Rendering ----
@@ -662,7 +690,7 @@ void CalendarActivity::renderMonthGrid() {
   }
 
   // Button hints
-  const auto labels = mappedInput.mapLabels("Back/Refresh", "View/+Add", "Prev Mo", "Next Mo");
+  const auto labels = mappedInput.mapLabels("Back/Sync", "View/+Add", "Prev Mo", "Next Mo");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 }
 
@@ -679,25 +707,55 @@ void CalendarActivity::renderDayDetail() {
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, headerBuf);
 
   const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-  const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.verticalSpacing;
+  const int contentBottom = pageHeight - metrics.buttonHintsHeight - metrics.verticalSpacing;
 
   if (dayEvents.empty()) {
-    renderer.drawText(UI_12_FONT_ID, metrics.contentSidePadding, contentTop + 20, "No events");
+    renderer.drawText(NOTOSANS_16_FONT_ID, metrics.contentSidePadding, contentTop + 20, "No events");
   } else {
-    GUI.drawList(renderer, Rect{0, contentTop, pageWidth, contentHeight}, static_cast<int>(dayEvents.size()),
-                 static_cast<int>(dayDetailIndex), [this](int index) -> std::string {
-                   const auto* ev = dayEvents[index];
-                   if (ev->allDay) {
-                     return "All day: " + ev->summary;
-                   }
-                   char timeBuf[8];
-                   snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d ", ev->startHour, ev->startMinute);
-                   std::string line = std::string(timeBuf) + ev->summary;
-                   if (!ev->location.empty()) {
-                     line += " @ " + ev->location;
-                   }
-                   return line;
-                 });
+    const int lineHeight = renderer.getLineHeight(NOTOSANS_16_FONT_ID);
+    const int textX = metrics.contentSidePadding;
+    const int maxTextW = pageWidth - metrics.contentSidePadding * 2;
+    int y = contentTop + 8;
+
+    for (size_t i = 0; i < dayEvents.size(); i++) {
+      if (y + lineHeight > contentBottom) break;
+      const auto* ev = dayEvents[i];
+
+      // Time line
+      char timeBuf[16];
+      if (ev->allDay) {
+        snprintf(timeBuf, sizeof(timeBuf), "All day");
+      } else {
+        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", ev->startHour, ev->startMinute);
+      }
+      renderer.drawText(NOTOSANS_16_FONT_ID, textX, y, timeBuf);
+      y += lineHeight + 2;
+
+      // Event title wrapped across multiple lines
+      auto lines = renderer.wrappedText(NOTOSANS_16_FONT_ID, ev->summary.c_str(), maxTextW, 10);
+      for (const auto& line : lines) {
+        if (y + lineHeight > contentBottom) break;
+        renderer.drawText(NOTOSANS_16_FONT_ID, textX, y, line.c_str());
+        y += lineHeight;
+      }
+
+      // Location
+      if (!ev->location.empty()) {
+        const int locLineH = renderer.getLineHeight(UI_12_FONT_ID);
+        if (y + locLineH <= contentBottom) {
+          auto loc = "@ " + ev->location;
+          renderer.drawText(UI_12_FONT_ID, textX, y, loc.c_str());
+          y += locLineH;
+        }
+      }
+
+      // Separator between events
+      y += 8;
+      if (i + 1 < dayEvents.size() && y + 2 <= contentBottom) {
+        renderer.fillRect(textX, y, maxTextW, 1, true);
+        y += 8;
+      }
+    }
   }
 
   const auto labels = mappedInput.mapLabels(tr(STR_BACK), "", tr(STR_DIR_UP), tr(STR_DIR_DOWN));

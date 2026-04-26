@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <unordered_set>
 
 #include "MappedInputManager.h"
 #include "activities/network/WifiSelectionActivity.h"
@@ -69,7 +70,8 @@ void ShoppingListActivity::onExit() {
   if (!items.empty()) {
     saveCacheToSd();
   }
-  successPopupUntilMs = 0;
+  popupUntilMs = 0;
+  popupText.clear();
   items.clear();
   displayRows.clear();
   WiFi.mode(WIFI_OFF);
@@ -107,40 +109,68 @@ void ShoppingListActivity::fetchList() {
     }
   }
 
+  std::vector<int> syncedIds;
   std::vector<int> remainingPendingIds;
-  remainingPendingIds.reserve(pendingIds.size());
-  for (int itemId : pendingIds) {
-    const auto err = TandoorClient::setItemChecked(itemId, true);
-    if (err == TandoorClient::OK || err == TandoorClient::NOT_FOUND) {
-      continue;
+
+  if (!pendingIds.empty()) {
+    auto bulkErr = TandoorClient::bulkSetChecked(pendingIds, true);
+    if (bulkErr == TandoorClient::OK) {
+      syncedIds = pendingIds;
+    } else if (bulkErr == TandoorClient::AUTH_FAILED || bulkErr == TandoorClient::NETWORK_ERROR) {
+      remainingPendingIds = pendingIds;
+    } else {
+      LOG_DBG("SHOP", "Bulk sync unavailable, trying individual");
+      syncedIds.reserve(pendingIds.size());
+      remainingPendingIds.reserve(pendingIds.size());
+      for (int itemId : pendingIds) {
+        auto itemErr = TandoorClient::setItemChecked(itemId, true);
+        if (itemErr == TandoorClient::OK || itemErr == TandoorClient::NOT_FOUND) {
+          syncedIds.push_back(itemId);
+        } else {
+          LOG_ERR("SHOP", "Sync failed for item %d: %s", itemId, TandoorClient::errorString(itemErr));
+          remainingPendingIds.push_back(itemId);
+        }
+      }
     }
-    LOG_ERR("SHOP", "Sync failed for item %d: %s", itemId, TandoorClient::errorString(err));
-    remainingPendingIds.push_back(itemId);
+  }
+
+  if (!syncedIds.empty()) {
+    items.erase(std::remove_if(items.begin(), items.end(),
+                               [&syncedIds](const ShoppingListItem& item) {
+                                 return item.checked && item.pendingSync && containsId(syncedIds, item.id);
+                               }),
+                items.end());
+    saveCacheToSd();
+    vTaskDelay(pdMS_TO_TICKS(500));
   }
 
   std::vector<ShoppingListItem> fetchedItems;
-  TandoorClient::Error err = TandoorClient::fetchShoppingList(fetchedItems);
-  if (err != TandoorClient::OK) {
-    // Try cache as fallback
+  TandoorClient::Error fetchErr = TandoorClient::fetchShoppingList(fetchedItems);
+  if (fetchErr != TandoorClient::OK) {
+    WiFi.disconnect();
+    WiFi.mode(WIFI_OFF);
     if (loadCacheFromSd()) {
       buildDisplayRows();
       state = State::DISPLAYING;
-      LOG_DBG("SHOP", "Fetch failed (%s), using cache", TandoorClient::errorString(err));
+      popupText = std::string(TandoorClient::errorString(fetchErr)) + " — showing cached list";
+      popupUntilMs = millis() + POPUP_DURATION_MS * 2;
+      LOG_DBG("SHOP", "Fetch failed (%s), using cache", TandoorClient::errorString(fetchErr));
     } else {
       state = State::ERROR;
-      errorMessage = fetchFailedNoCacheMessage(TandoorClient::errorString(err));
+      errorMessage = fetchFailedNoCacheMessage(TandoorClient::errorString(fetchErr));
     }
     requestUpdate();
     return;
   }
 
-  mergeFetchedItems(std::move(fetchedItems), localItems, remainingPendingIds);
+  mergeFetchedItems(std::move(fetchedItems), localItems, remainingPendingIds, syncedIds);
   saveCacheToSd();
   buildDisplayRows();
   selectorIndex = 0;
   state = State::DISPLAYING;
   userActive = false;  // Allow auto-sleep after refresh — user can put device down
-  successPopupUntilMs = millis() + SUCCESS_POPUP_DURATION_MS;
+  popupText = "Refresh successful";
+  popupUntilMs = millis() + POPUP_DURATION_MS;
 
   // Turn off WiFi to save power while shopping
   WiFi.disconnect();
@@ -151,7 +181,8 @@ void ShoppingListActivity::fetchList() {
 
 void ShoppingListActivity::mergeFetchedItems(std::vector<ShoppingListItem>&& fetchedItems,
                                              const std::vector<ShoppingListItem>& localItems,
-                                             const std::vector<int>& pendingIds) {
+                                             const std::vector<int>& pendingIds,
+                                             const std::vector<int>& syncedIds) {
   items.clear();
   items.reserve(fetchedItems.size() + pendingIds.size());
   std::vector<int> fetchedIds;
@@ -161,7 +192,7 @@ void ShoppingListActivity::mergeFetchedItems(std::vector<ShoppingListItem>&& fet
 
   for (auto& fetched : fetchedItems) {
     fetchedIds.push_back(fetched.id);
-    if (fetched.checked) {
+    if (fetched.checked || containsId(syncedIds, fetched.id)) {
       serverCheckedIds.push_back(fetched.id);
       continue;
     }
@@ -196,6 +227,12 @@ void ShoppingListActivity::mergeFetchedItems(std::vector<ShoppingListItem>&& fet
     if (a.category != b.category) return a.category < b.category;
     return a.foodName < b.foodName;
   });
+
+  std::unordered_set<int> seenIds;
+  seenIds.reserve(items.size());
+  items.erase(std::remove_if(items.begin(), items.end(),
+                             [&seenIds](const ShoppingListItem& item) { return !seenIds.insert(item.id).second; }),
+              items.end());
 }
 
 void ShoppingListActivity::buildDisplayRows() {
@@ -206,22 +243,63 @@ void ShoppingListActivity::buildDisplayRows() {
   displayRows.reserve(items.size() + 16);
 
   std::string lastCategory;
-  for (size_t i = 0; i < items.size(); i++) {
+  for (size_t i = 0; i < items.size();) {
     const auto& item = items[i];
     // Insert category header when category changes
     if (item.category != lastCategory) {
       DisplayRow header;
       header.type = DisplayRow::CATEGORY_HEADER;
-      header.itemIndex = 0;
       header.headerText = item.category.empty() ? "Other" : item.category;
       displayRows.push_back(std::move(header));
       lastCategory = item.category;
     }
+
+    std::vector<size_t> groupedIndices;
+    groupedIndices.push_back(i);
+    size_t j = i + 1;
+    while (j < items.size() && items[j].category == item.category && items[j].foodName == item.foodName &&
+           items[j].unitName == item.unitName && items[j].amount == item.amount && items[j].checked == item.checked) {
+      groupedIndices.push_back(j);
+      j++;
+    }
+
     DisplayRow row;
     row.type = DisplayRow::ITEM;
-    row.itemIndex = i;
+    row.checked = item.checked;
+    row.itemIndices = groupedIndices;
+    row.lineText = buildGroupedLineText(groupedIndices);
     displayRows.push_back(std::move(row));
+    i = j;
   }
+}
+
+std::string ShoppingListActivity::buildGroupedLineText(const std::vector<size_t>& itemIndices) const {
+  if (itemIndices.empty()) return "";
+
+  const auto& first = items[itemIndices.front()];
+  const size_t groupCount = itemIndices.size();
+  float displayAmount = 0.0f;
+  if (first.amount > 0.0f) {
+    displayAmount = first.amount * static_cast<float>(groupCount);
+  } else {
+    displayAmount = static_cast<float>(groupCount);
+  }
+
+  char amountBuf[16];
+  if (displayAmount == static_cast<int>(displayAmount)) {
+    snprintf(amountBuf, sizeof(amountBuf), "%d", static_cast<int>(displayAmount));
+  } else {
+    snprintf(amountBuf, sizeof(amountBuf), "%.1f", displayAmount);
+  }
+
+  std::string line = amountBuf;
+  if (!first.unitName.empty()) {
+    line += " ";
+    line += first.unitName;
+  }
+  line += " ";
+  line += first.foodName;
+  return line;
 }
 
 void ShoppingListActivity::toggleCurrentItem() {
@@ -229,13 +307,16 @@ void ShoppingListActivity::toggleCurrentItem() {
   const auto& row = displayRows[selectorIndex];
   if (row.type != DisplayRow::ITEM) return;
 
-  auto& item = items[row.itemIndex];
-  item.checked = !item.checked;
-  item.pendingSync = item.checked;
+  const bool newChecked = !row.checked;
+  for (size_t itemIndex : row.itemIndices) {
+    items[itemIndex].checked = newChecked;
+    items[itemIndex].pendingSync = newChecked;
+  }
   userActive = true;
 
   // Local toggle stays visible until a later refresh confirms sync.
   saveCacheToSd();
+  buildDisplayRows();
   requestUpdate();
 }
 
@@ -319,8 +400,8 @@ bool ShoppingListActivity::loadCacheFromSd() {
 }
 
 void ShoppingListActivity::loop() {
-  if (successPopupUntilMs != 0 && millis() >= successPopupUntilMs) {
-    successPopupUntilMs = 0;
+  if (popupUntilMs != 0 && millis() >= popupUntilMs) {
+    popupUntilMs = 0;
     requestUpdate();
   }
 
@@ -410,43 +491,42 @@ void ShoppingListActivity::render(RenderLock&&) {
     GUI.drawList(renderer, listRect, static_cast<int>(displayRows.size()), static_cast<int>(selectorIndex),
                  [this](int index) -> std::string {
                    const auto& row = displayRows[index];
-                   if (row.type == DisplayRow::CATEGORY_HEADER) {
-                     return "-- " + row.headerText + " --";
-                   }
-                   const auto& item = items[row.itemIndex];
-                   char amountBuf[16];
-                   if (item.amount == static_cast<int>(item.amount)) {
-                     snprintf(amountBuf, sizeof(amountBuf), "%d", static_cast<int>(item.amount));
-                   } else {
-                     snprintf(amountBuf, sizeof(amountBuf), "%.1f", item.amount);
-                   }
-                   std::string line = amountBuf;
-                   if (!item.unitName.empty()) {
-                     line += " " + item.unitName;
-                   }
-                   line += " " + item.foodName;
-                   return line;
+                   return row.type == DisplayRow::CATEGORY_HEADER ? "-- " + row.headerText + " --" : row.lineText;
                  });
   }
 
-  // Draw strikethrough lines over checked items
+  // Checked items stay visible until sync, but render them as inverted rows so the state is obvious on e-ink.
   if (!displayRows.empty()) {
     const int rowHeight = metrics.listRowHeight;
     const int pageItems = listRect.height / rowHeight;
     const int pageStart = static_cast<int>(selectorIndex) / pageItems * pageItems;
     const int rowCount = static_cast<int>(displayRows.size());
-    const int textH = renderer.getLineHeight(UI_10_FONT_ID);
-    const int padX = metrics.contentSidePadding;
+    const int totalPages = (rowCount + pageItems - 1) / pageItems;
+    const bool lyraStyle =
+        SETTINGS.uiTheme == CrossPointSettings::UI_THEME::LYRA || SETTINGS.uiTheme == CrossPointSettings::UI_THEME::LYRA_3_COVERS;
+    const int contentWidth =
+        listRect.width - (lyraStyle && totalPages > 1 ? (metrics.scrollBarWidth + metrics.scrollBarRightOffset) : 5);
+    const int rowTextX = lyraStyle ? listRect.x + metrics.contentSidePadding + 8 : listRect.x + metrics.contentSidePadding;
+    const int rowTextYAdjust = lyraStyle ? 7 : 0;
+    const int rowTextWidth = lyraStyle ? contentWidth - metrics.contentSidePadding * 2 - 16
+                                       : contentWidth - metrics.contentSidePadding * 2;
 
     for (int i = pageStart; i < rowCount && i < pageStart + pageItems; i++) {
       const auto& row = displayRows[i];
       if (row.type != DisplayRow::ITEM) continue;
-      if (!items[row.itemIndex].checked) continue;
+      if (!row.checked) continue;
 
       int itemY = listRect.y + (i % pageItems) * rowHeight;
-      int lineY = itemY + textH / 2;
-      bool inverted = (i == static_cast<int>(selectorIndex));
-      renderer.drawLine(padX, lineY, pageWidth - padX * 2, lineY, !inverted);
+      const bool selected = (i == static_cast<int>(selectorIndex));
+      if (lyraStyle) {
+        renderer.fillRoundedRect(metrics.contentSidePadding, itemY, contentWidth - metrics.contentSidePadding * 2,
+                                 rowHeight, 6, Color::Black);
+      } else {
+        renderer.fillRect(0, itemY - 2, listRect.width, rowHeight, true);
+      }
+
+      std::string text = renderer.truncatedText(UI_10_FONT_ID, row.lineText.c_str(), rowTextWidth);
+      renderer.drawText(UI_10_FONT_ID, rowTextX, itemY + rowTextYAdjust, text.c_str(), false);
     }
   }
 
@@ -456,12 +536,12 @@ void ShoppingListActivity::render(RenderLock&&) {
     GUI.drawPopup(renderer, "Fetching shopping list...");
   } else if (state == State::ERROR) {
     GUI.drawPopup(renderer, errorMessage.c_str());
-  } else if (successPopupUntilMs != 0) {
-    GUI.drawPopup(renderer, "Refresh successful");
+  } else if (popupUntilMs != 0) {
+    GUI.drawPopup(renderer, popupText.c_str());
   }
 
   // Button hints — long-press Back refreshes
-  const auto labels = mappedInput.mapLabels("Back/Refresh", tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels("Back/Sync", tr(STR_SELECT), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

@@ -47,6 +47,23 @@
               pkgs.libusb1
             ];
         };
+
+        uploadApp = pkgs.writeShellApplication {
+          name = "crosspoint-upload";
+          runtimeInputs = buildInputs;
+          text = ''
+            set -euo pipefail
+            export GIT_DISCOVERY_ACROSS_FILESYSTEM=1
+            export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+
+            if [ ! -f open-x4-sdk/README.md ]; then
+              echo "Initializing git submodules..."
+              git submodule update --init --recursive
+            fi
+
+            exec pio run -t upload "$@"
+          '';
+        };
       in
       {
         # ── nix develop ──────────────────────────────────────────────
@@ -141,7 +158,18 @@
         };
 
         # ── nix run ──────────────────────────────────────────────────
-        # Quick shortcut: `nix run .#flash -- /dev/ttyACM0`
+        # Default dev shortcut: `nix run` or `nix run .#upload`
+        apps.default = {
+          type = "app";
+          program = "${uploadApp}/bin/crosspoint-upload";
+        };
+
+        apps.upload = {
+          type = "app";
+          program = "${uploadApp}/bin/crosspoint-upload";
+        };
+
+        # Manual built-artifact flashing: `nix run .#flash -- /dev/ttyACM0`
         apps.flash = {
           type = "app";
           program = "${self.packages.${system}.default}/firmware/flash.sh";

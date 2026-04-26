@@ -6,12 +6,13 @@ Month grid calendar that syncs with a CalDAV server (tested with [Radicale](http
 
 1. Copy [`templates/caldav.template.json`](../../../templates/caldav.template.json) to `/.crosspoint/caldav.json` on the SD card
 2. Edit the file with:
-   - **calendarUrl** -- the full `.ics` URL (e.g. `https://cal.example.com/user/calendar-id/`)
+   - **calendarUrl** -- the CalDAV calendar collection URL, ending with `/` (e.g. `https://cal.example.com/user/calendar-id/`)
    - **username**
    - **password**
 3. Safely eject the SD card and start the Calendar activity
 
 The server must support CalDAV `REPORT` requests with calendar queries. Radicale does.
+Do not use a subscribed `.ics` export URL here; use the writable calendar collection URL instead.
 
 ## How It Works
 

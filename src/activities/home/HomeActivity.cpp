@@ -21,7 +21,7 @@
 #include "fontIds.h"
 
 int HomeActivity::getMenuItemCount() const {
-  int count = 8;  // File Browser, Recents, File transfer, Shopping List, Calendar, Contacts, Wordle, Settings
+  int count = 7;  // File Browser, Recents, File transfer, Shopping List, Calendar, Contacts, Settings
   if (!recentBooks.empty()) {
     count += recentBooks.size();
   }
@@ -195,7 +195,6 @@ void HomeActivity::loop() {
     const int shoppingListIdx = idx++;
     const int calendarIdx = idx++;
     const int contactsIdx = idx++;
-    const int wordleIdx = idx++;
     const int settingsIdx = idx;
 
     if (selectorIndex < recentBooks.size()) {
@@ -214,8 +213,6 @@ void HomeActivity::loop() {
       onCalendarOpen();
     } else if (menuSelectedIndex == contactsIdx) {
       onContactsOpen();
-    } else if (menuSelectedIndex == wordleIdx) {
-      onWordleOpen();
     } else if (menuSelectedIndex == settingsIdx) {
       onSettingsOpen();
     }
@@ -243,9 +240,8 @@ void HomeActivity::render(RenderLock&&) {
                                         "Shopping List",
                                         "Calendar",
                                         tr(STR_CONTACTS),
-                                        "Wordle",
                                         tr(STR_SETTINGS_TITLE)};
-  std::vector<UIIcon> menuIcons = {Folder, Recent, Transfer, File, File, File, Book, Settings};
+  std::vector<UIIcon> menuIcons = {Folder, Recent, Transfer, Shopping, Calendar, Contacts, Settings};
 
   if (hasOpdsServers) {
     menuItems.insert(menuItems.begin() + 2, tr(STR_OPDS_BROWSER));
@@ -291,4 +287,3 @@ void HomeActivity::onShoppingListOpen() { activityManager.goToShoppingList(); }
 
 void HomeActivity::onCalendarOpen() { activityManager.goToCalendar(); }
 void HomeActivity::onContactsOpen() { activityManager.goToContacts(); }
-void HomeActivity::onWordleOpen() { activityManager.goToWordle(); }

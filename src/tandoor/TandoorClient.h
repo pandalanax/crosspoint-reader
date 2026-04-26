@@ -20,7 +20,7 @@ struct ShoppingListItem {
  * HTTP client for Tandoor Recipes shopping list API.
  *
  * API Endpoints:
- *   GET  /api/shopping-list-entry/?format=json&page_size=200  - Get all entries
+ *   GET  /api/shopping-list-entry/?format=json&page_size=20   - Get shopping entries page by page
  *   PATCH /api/shopping-list-entry/{id}/?format=json          - Update an entry
  *
  * Authentication:
@@ -45,6 +45,15 @@ class TandoorClient {
    * @return OK on success, error code on failure
    */
   static Error setItemChecked(int itemId, bool checked);
+
+  /**
+   * Bulk check/uncheck shopping list entries in a single request.
+   * Uses POST /shopping-list-entry/bulk/ endpoint.
+   * @param itemIds The entry IDs to update
+   * @param checked The new checked state
+   * @return OK on success, NOT_FOUND if bulk endpoint unavailable
+   */
+  static Error bulkSetChecked(const std::vector<int>& itemIds, bool checked);
 
   static const char* errorString(Error error);
 };

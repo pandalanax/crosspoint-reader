@@ -15,8 +15,9 @@ namespace {
 constexpr int HTTP_TIMEOUT_MS = 10000;        // 10s per request
 constexpr int MAX_RETRIES = 2;                // Retry once on transient failure
 constexpr int RETRY_DELAY_MS = 1000;          // 1s between retries
-constexpr int MAX_PAGES = 10;                 // Safety bound on pagination
-constexpr int MAX_RESPONSE_SIZE = 64 * 1024;  // 64KB max response per page
+constexpr int MAX_PAGES = 10;                  // Safety bound on pagination
+constexpr int PAGE_SIZE = 50;                  // Fewer pages → fewer HTTP roundtrips on flaky WiFi
+constexpr int MAX_RESPONSE_SIZE = 128 * 1024;  // 128KB max response per page
 
 bool isHttpsUrl(const std::string& url) { return url.rfind("https://", 0) == 0; }
 
@@ -83,6 +84,17 @@ int getWithRetry(const std::string& url, String& responseBody) {
       }
       responseBody = http.getString();
       http.end();
+
+      if (responseBody.length() == 0 && len != 0) {
+        LOG_ERR("TDR", "Empty response body (expected %d bytes, heap: %lu)", len, (unsigned long)ESP.getFreeHeap());
+        lastCode = -1;
+        continue;
+      }
+      if (len > 0 && static_cast<int>(responseBody.length()) < len) {
+        LOG_ERR("TDR", "Truncated: got %d of %d bytes", responseBody.length(), len);
+        lastCode = -1;
+        continue;
+      }
       return 200;
     }
 
@@ -117,7 +129,10 @@ TandoorClient::Error TandoorClient::fetchShoppingList(std::vector<ShoppingListIt
   outItems.clear();
   outItems.reserve(64);
 
-  std::string url = TANDOOR_STORE.getApiBaseUrl() + "/shopping-list-entry/?format=json&page_size=200";
+  char urlBuf[256];
+  snprintf(urlBuf, sizeof(urlBuf), "%s/shopping-list-entry/?format=json&page_size=%d",
+           TANDOOR_STORE.getApiBaseUrl().c_str(), PAGE_SIZE);
+  std::string url(urlBuf);
   int page = 0;
 
   while (!url.empty()) {
@@ -142,16 +157,26 @@ TandoorClient::Error TandoorClient::fetchShoppingList(std::vector<ShoppingListIt
       return (httpCode < 0) ? NETWORK_ERROR : SERVER_ERROR;
     }
 
+    LOG_DBG("TDR", "Response: %d bytes, heap: %lu", responseBody.length(), (unsigned long)ESP.getFreeHeap());
+    if (responseBody.length() > 0) {
+      LOG_DBG("TDR", "Starts: %.80s", responseBody.c_str());
+    }
+
     JsonDocument doc;
     const DeserializationError error = deserializeJson(doc, responseBody);
     if (error) {
-      LOG_ERR("TDR", "JSON parse failed: %s", error.c_str());
+      LOG_ERR("TDR", "JSON parse failed: %s (len=%d)", error.c_str(), responseBody.length());
       if (!outItems.empty()) break;  // Keep partial results
       return JSON_ERROR;
     }
 
     JsonArray results = doc["results"].as<JsonArray>();
     for (JsonObject entry : results) {
+      // Skip items assigned to a named shopping list (e.g. "Obi").
+      // Only show items on the default (unassigned) list.
+      JsonArray shoppingLists = entry["shopping_lists"].as<JsonArray>();
+      if (shoppingLists && shoppingLists.size() > 0) continue;
+
       ShoppingListItem item;
       item.id = entry["id"] | 0;
       item.checked = entry["checked"] | false;
@@ -229,6 +254,53 @@ TandoorClient::Error TandoorClient::setItemChecked(int itemId, bool checked) {
   }
 
   LOG_ERR("TDR", "PATCH failed: %d", lastCode);
+  return (lastCode < 0) ? NETWORK_ERROR : SERVER_ERROR;
+}
+
+TandoorClient::Error TandoorClient::bulkSetChecked(const std::vector<int>& itemIds, bool checked) {
+  if (itemIds.empty()) return OK;
+  if (!TANDOOR_STORE.hasCredentials()) return NO_CREDENTIALS;
+  if (!isWifiConnected()) return NETWORK_ERROR;
+
+  char urlBuf[256];
+  snprintf(urlBuf, sizeof(urlBuf), "%s/shopping-list-entry/bulk/?format=json", TANDOOR_STORE.getApiBaseUrl().c_str());
+  std::string url(urlBuf);
+
+  JsonDocument doc;
+  JsonArray ids = doc["ids"].to<JsonArray>();
+  for (int id : itemIds) ids.add(id);
+  doc["checked"] = checked;
+  String body;
+  serializeJson(doc, body);
+
+  LOG_DBG("TDR", "Bulk %s %zu items", checked ? "check" : "uncheck", itemIds.size());
+
+  int lastCode = -1;
+  for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      if (!isWifiConnected()) return NETWORK_ERROR;
+      LOG_DBG("TDR", "Bulk retry %d/%d", attempt, MAX_RETRIES);
+      vTaskDelay(pdMS_TO_TICKS(RETRY_DELAY_MS));
+    }
+
+    HTTPClient http;
+    std::unique_ptr<WiFiClientSecure> secureClient;
+    WiFiClient plainClient;
+    beginRequest(http, secureClient, plainClient, url);
+    http.addHeader("Content-Type", "application/json");
+
+    lastCode = http.POST(body);
+    http.end();
+
+    if (lastCode == 200 || lastCode == 204) return OK;
+    if (lastCode == 401) return AUTH_FAILED;
+    if (lastCode == 404) return NOT_FOUND;
+    if (!isTransientError(lastCode)) break;
+
+    LOG_DBG("TDR", "Bulk transient error: %d", lastCode);
+  }
+
+  LOG_ERR("TDR", "Bulk sync failed: %d", lastCode);
   return (lastCode < 0) ? NETWORK_ERROR : SERVER_ERROR;
 }
 
